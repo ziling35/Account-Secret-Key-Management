@@ -8,16 +8,22 @@ services:
       - .env
     volumes:
       - ./db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   app:
     build: .
     container_name: windsurf-backend
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     env_file:
       - .env
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"  # 允许公网访问（请确保服务器防火墙和安全组已配置）
     restart: unless-stopped
 

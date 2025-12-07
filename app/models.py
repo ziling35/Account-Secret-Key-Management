@@ -50,3 +50,12 @@ class Key(Base):
     # 无限额度专用：每日请求限制
     daily_request_count = Column(Integer, default=0, nullable=False)
     last_reset_date = Column(Date, nullable=True)  # 最后重置日期
+
+class Config(Base):
+    __tablename__ = "config"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True, nullable=False)
+    value = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

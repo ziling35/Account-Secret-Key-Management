@@ -266,6 +266,19 @@
                     {{ scope.row.notes || '-' }}
                 </template>
             </el-table-column>
+
+            <el-table-column label="操作" width="100" align="center" fixed="right">
+                <template #default="scope">
+                    <el-button 
+                        link 
+                        type="danger" 
+                        size="small"
+                        @click="handleDelete(scope.row)"
+                        title="删除密钥">
+                        删除
+                    </el-button>
+                </template>
+            </el-table-column>
         </el-table>
 
         <div style="margin-top: 16px; display: flex; justify-content: center;">
@@ -630,6 +643,33 @@ createApp({
             }
         };
 
+        const handleDelete = async (row) => {
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    `确定要删除密钥 ${row.key_code.substring(0, 8)}... 吗？此操作不可恢复！`,
+                    '删除确认',
+                    {
+                        confirmButtonText: '确定删除',
+                        cancelButtonText: '取消',
+                        type: 'warning',
+                        confirmButtonClass: 'el-button--danger'
+                    }
+                );
+
+                // 发送删除请求
+                const response = await axios.delete(`/admin/api/keys/delete/${row.id}`);
+                
+                ElMessage.success(response.data.message || '删除成功');
+                
+                // 重新加载列表
+                loadKeys();
+            } catch (error) {
+                if (error !== 'cancel') {
+                    ElMessage.error('删除失败: ' + (error.response?.data?.detail || error.message));
+                }
+            }
+        };
+
         onMounted(() => {
             loadColumnPreference();
             loadKeys();
@@ -644,7 +684,7 @@ createApp({
             keyCountText, sortChips, sortChipsDisplay, extraSortCount,
             loadKeys, handleSearch, handleRefresh, handleClear, handleCreate, handleKeyTypeChange, handleCreateSubmit,
             handleColumnSort, getSortIcon, removeSort, copyKey, copyKeys, downloadKeysTxt,
-            truncate, formatDateTime, getRemainingTimeColor, saveColumnPreference
+            truncate, formatDateTime, getRemainingTimeColor, saveColumnPreference, handleDelete
         };
     }
 }).use(ElementPlus).mount('#keyApp');

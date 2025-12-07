@@ -83,3 +83,10 @@ class StatsResponse(BaseModel):
     inactive_keys: int
     active_keys: int
     expired_keys: int
+
+# 版本控制
+class VersionResponse(BaseModel):
+    version: str
+    min_client_version: str
+    update_required: bool
+    update_message: Optional[str] = None

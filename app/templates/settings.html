@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}系统设置 - Windsurf账号池管理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title"><i class="bi bi-gear"></i> 系统设置</h1>
+</div>
+
+{% raw %}
+<div id="settingsApp" v-cloak>
+    <!-- 版本控制设置 -->
+    <el-card class="box-card" style="margin-bottom: 20px;">
+        <template #header>
+            <div class="card-header">
+                <span><i class="bi bi-code-square"></i> 版本控制设置</span>
+                <el-button type="primary" @click="handleSave" :loading="saving" :icon="Check">保存设置</el-button>
+            </div>
+        </template>
+
+        <el-form :model="versionForm" label-width="160px" style="max-width: 800px;">
+            <el-form-item label="服务器版本号">
+                <el-input 
+                    v-model="versionForm.server_version" 
+                    placeholder="例如: 1.0.0"
+                    style="width: 300px;">
+                    <template #prepend>
+                        <i class="bi bi-server"></i>
+                    </template>
+                </el-input>
+                <div style="color: #909399; font-size: 13px; margin-top: 6px;">
+                    <i class="bi bi-info-circle"></i> 当前后端服务器的版本号
+                </div>
+            </el-form-item>
+
+            <el-form-item label="最低客户端版本">
+                <el-input 
+                    v-model="versionForm.min_client_version" 
+                    placeholder="例如: 1.0.0"
+                    style="width: 300px;">
+                    <template #prepend>
+                        <i class="bi bi-pc-display"></i>
+                    </template>
+                </el-input>
+                <div style="color: #909399; font-size: 13px; margin-top: 6px;">
+                    <i class="bi bi-info-circle"></i> 低于此版本的客户端将被强制要求更新
+                </div>
+            </el-form-item>
+
+            <el-form-item label="更新提示消息">
+                <el-input 
+                    v-model="versionForm.update_message" 
+                    type="textarea"
+                    :rows="3"
+                    placeholder="例如: 发现新版本，请立即更新客户端以使用最新功能"
+                    style="width: 500px;">
+                </el-input>
+                <div style="color: #909399; font-size: 13px; margin-top: 6px;">
+                    <i class="bi bi-info-circle"></i> 客户端版本过低时显示的提示信息
+                </div>
+            </el-form-item>
+
+            <el-divider></el-divider>
+
+            <el-alert
+                title="版本号格式说明"
+                type="info"
+                :closable="false"
+                style="margin-bottom: 20px;">
+                <template #default>
+                    <div style="line-height: 1.8;">
+                        <p style="margin: 0 0 8px 0;"><strong>格式：</strong>主版本.次版本.修订号 (例如: 1.2.3)</p>
+                        <p style="margin: 0 0 4px 0;"><strong>示例：</strong></p>
+                        <ul style="margin: 4px 0 0 20px; padding: 0;">
+                            <li>1.0.0 - 初始版本</li>
+                            <li>1.0.1 - 小修复</li>
+                            <li>1.1.0 - 新增功能</li>
+                            <li>2.0.0 - 重大更新</li>
+                        </ul>
+                    </div>
+                </template>
+            </el-alert>
+
+            <el-alert
+                title="使用说明"
+                type="warning"
+                :closable="false">
+                <template #default>
+                    <div style="line-height: 1.8;">
+                        <p style="margin: 0 0 8px 0;"><strong>⚠️ 重要提示：</strong></p>
+                        <ul style="margin: 4px 0 0 20px; padding: 0;">
+                            <li><strong>强制更新机制：</strong>当客户端版本 < 最低客户端版本时，用户将无法使用任何功能</li>
+                            <li><strong>谨慎修改：</strong>修改"最低客户端版本"将影响所有用户，建议提前通知</li>
+                            <li><strong>回滚方法：</strong>如需取消强制更新，将"最低客户端版本"改回较低版本即可</li>
+                        </ul>
+                    </div>
+                </template>
+            </el-alert>
+        </el-form>
+    </el-card>
+
+    <!-- 配置预览 -->
+    <el-card class="box-card">
+        <template #header>
+            <div class="card-header">
+                <span><i class="bi bi-eye"></i> 当前配置预览</span>
+                <el-button @click="handleRefresh" :icon="Refresh">刷新</el-button>
+            </div>
+        </template>
+
+        <el-descriptions :column="2" border>
+            <el-descriptions-item label="服务器版本号">
+                <el-tag type="success" size="large">{{ versionForm.server_version || '-' }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="最低客户端版本">
+                <el-tag type="warning" size="large">{{ versionForm.min_client_version || '-' }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="更新提示消息" :span="2">
+                {{ versionForm.update_message || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="版本比较结果" :span="2">
+                <div v-if="compareVersions()">
+                    <el-tag v-if="compareVersions() === 'valid'" type="success">
+                        <i class="bi bi-check-circle"></i> 配置正常
+                    </el-tag>
+                    <el-tag v-else-if="compareVersions() === 'warning'" type="warning">
+                        <i class="bi bi-exclamation-triangle"></i> 最低版本高于服务器版本，建议调整
+                    </el-tag>
+                    <el-tag v-else type="info">
+                        <i class="bi bi-info-circle"></i> 版本相同
+                    </el-tag>
+                </div>
+            </el-descriptions-item>
+        </el-descriptions>
+    </el-card>
+</div>
+{% endraw %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const { createApp, ref, onMounted } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+createApp({
+    setup() {
+        // 图标
+        const Check = ElementPlusIconsVue.Check;
+        const Refresh = ElementPlusIconsVue.Refresh;
+
+        // 数据
+        const loading = ref(false);
+        const saving = ref(false);
+        const versionForm = ref({
+            server_version: '',
+            min_client_version: '',
+            update_message: ''
+        });
+
+        // 加载配置
+        const loadConfig = async () => {
+            loading.value = true;
+            try {
+                const response = await axios.get('/admin/api/settings/version');
+                versionForm.value = response.data;
+                ElMessage.success('配置加载成功');
+            } catch (error) {
+                ElMessage.error('加载失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                loading.value = false;
+            }
+        };
+
+        // 保存配置
+        const handleSave = async () => {
+            // 验证版本号格式
+            const versionRegex = /^\d+\.\d+\.\d+$/;
+            if (!versionRegex.test(versionForm.value.server_version)) {
+                ElMessage.error('服务器版本号格式不正确，应为 x.y.z 格式（例如: 1.0.0）');
+                return;
+            }
+            if (!versionRegex.test(versionForm.value.min_client_version)) {
+                ElMessage.error('最低客户端版本格式不正确，应为 x.y.z 格式（例如: 1.0.0）');
+                return;
+            }
+
+            // 比较版本并警告
+            const comparison = compareVersions();
+            if (comparison === 'warning') {
+                try {
+                    await ElMessageBox.confirm(
+                        '最低客户端版本高于服务器版本，这可能导致混乱。确定要保存吗？',
+                        '版本配置警告',
+                        {
+                            confirmButtonText: '确定保存',
+                            cancelButtonText: '取消',
+                            type: 'warning'
+                        }
+                    );
+                } catch {
+                    return;
+                }
+            }
+
+            saving.value = true;
+            try {
+                const response = await axios.post('/admin/api/settings/version', versionForm.value);
+                ElMessage.success('保存成功！');
+            } catch (error) {
+                ElMessage.error('保存失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                saving.value = false;
+            }
+        };
+
+        // 刷新配置
+        const handleRefresh = () => {
+            loadConfig();
+        };
+
+        // 比较版本号
+        const compareVersions = () => {
+            const parseVersion = (v) => {
+                if (!v) return [0, 0, 0];
+                return v.split('.').map(n => parseInt(n) || 0);
+            };
+
+            const server = parseVersion(versionForm.value.server_version);
+            const minClient = parseVersion(versionForm.value.min_client_version);
+
+            // 比较版本
+            for (let i = 0; i < 3; i++) {
+                if (minClient[i] > server[i]) return 'warning';
+                if (minClient[i] < server[i]) return 'valid';
+            }
+            return 'equal';
+        };
+
+        onMounted(() => {
+            loadConfig();
+        });
+
+        return {
+            Check, Refresh,
+            loading, saving, versionForm,
+            loadConfig, handleSave, handleRefresh, compareVersions
+        };
+    }
+}).use(ElementPlus).mount('#settingsApp');
+</script>
+{% endblock %}

@@ -7,7 +7,7 @@ from typing import List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config
 from app.schemas import (
     AccountResponse, KeyCreate, KeyResponse, StatsResponse
 )
@@ -76,6 +76,11 @@ async def keys_page(request: Request, username: str = Depends(verify_admin)):
 async def accounts_page(request: Request, username: str = Depends(verify_admin)):
     """账号管理页面"""
     return templates.TemplateResponse("accounts.html", {"request": request})
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, username: str = Depends(verify_admin)):
+    """系统设置页面"""
+    return templates.TemplateResponse("settings.html", {"request": request})
 
 # ==================== API接口 ====================
 
@@ -407,6 +412,33 @@ async def toggle_key_disable(
         "is_disabled": key.is_disabled
     }
 
+@router.delete("/api/keys/delete/{key_id}")
+async def delete_key(
+    key_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除密钥"""
+    key = db.query(Key).filter(Key.id == key_id).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="密钥不存在")
+    
+    # 保存密钥信息用于日志
+    key_code = key.key_code
+    key_status = key.status.value
+    
+    # 删除密钥
+    db.delete(key)
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"密钥 {key_code[:8]}... 已删除",
+        "key_id": key_id,
+        "key_code": key_code,
+        "old_status": key_status
+    }
+
 @router.post("/api/accounts/update-status/{account_id}")
 async def update_account_status(
     account_id: int,
@@ -555,7 +587,69 @@ async def internal_upload_accounts(
         "duplicate_count": duplicate_count
     }
 
-# ==================== 辅助函数 ====================
+# ==================== 系统设置 API ====================
+
+@router.get("/api/settings/version")
+async def get_version_settings(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取版本控制配置"""
+    server_version = db.query(Config).filter(Config.key == "server_version").first()
+    min_client_version = db.query(Config).filter(Config.key == "min_client_version").first()
+    update_message = db.query(Config).filter(Config.key == "update_message").first()
+    
+    return {
+        "server_version": server_version.value if server_version else "1.0.0",
+        "min_client_version": min_client_version.value if min_client_version else "1.0.0",
+        "update_message": update_message.value if update_message else "发现新版本，请立即更新客户端"
+    }
+
+@router.post("/api/settings/version")
+async def update_version_settings(
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新版本控制配置"""
+    # 接收 JSON 数据
+    data = await request.json()
+    server_version = data.get("server_version", "")
+    min_client_version = data.get("min_client_version", "")
+    update_message = data.get("update_message", "")
+    
+    # 验证版本号格式
+    import re
+    version_pattern = r'^\d+\.\d+\.\d+$'
+    if not re.match(version_pattern, server_version):
+        raise HTTPException(status_code=400, detail="服务器版本号格式不正确")
+    if not re.match(version_pattern, min_client_version):
+        raise HTTPException(status_code=400, detail="最低客户端版本格式不正确")
+    
+    # 更新或创建配置
+    configs = [
+        ("server_version", server_version, "服务器版本号"),
+        ("min_client_version", min_client_version, "最低客户端版本号"),
+        ("update_message", update_message, "更新提示消息")
+    ]
+    
+    for key, value, desc in configs:
+        config = db.query(Config).filter(Config.key == key).first()
+        if config:
+            config.value = value
+            config.updated_at = datetime.utcnow()
+        else:
+            config = Config(key=key, value=value, description=desc)
+            db.add(config)
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "版本配置已更新"
+    }
+
+# ==================== 工具函数 ====================
 
 def get_statistics(db: Session) -> StatsResponse:
     """获取统计信息"""

@@ -5,8 +5,8 @@ import math
 import os
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType
-from app.schemas import AccountGetResponse, KeyStatusResponse
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config
+from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse
 from app.auth import get_api_key
 from app.utils import calculate_remaining_time
 
@@ -200,4 +200,43 @@ async def get_key_status(
         expires_at=expires_at_local,
         account_limit=limit,
         remaining_accounts=remaining_accounts
+    )
+
+@router.get("/version", response_model=VersionResponse)
+async def check_version(
+    client_version: str = "1.0.0",
+    db: Session = Depends(get_db)
+):
+    """
+    检查客户端版本是否需要更新
+    - 返回当前服务器版本和最低支持的客户端版本
+    - 如果客户端版本低于最低版本，返回 update_required=True
+    """
+    # 从配置表读取版本信息
+    server_version_config = db.query(Config).filter(Config.key == "server_version").first()
+    min_client_version_config = db.query(Config).filter(Config.key == "min_client_version").first()
+    update_message_config = db.query(Config).filter(Config.key == "update_message").first()
+    
+    # 默认版本
+    server_version = server_version_config.value if server_version_config else "1.0.0"
+    min_client_version = min_client_version_config.value if min_client_version_config else "1.0.0"
+    update_message = update_message_config.value if update_message_config else "发现新版本，请立即更新"
+    
+    # 简单的版本比较（假设格式为 x.y.z）
+    def version_tuple(v):
+        try:
+            return tuple(map(int, v.split('.')))
+        except:
+            return (0, 0, 0)
+    
+    client_ver_tuple = version_tuple(client_version)
+    min_ver_tuple = version_tuple(min_client_version)
+    
+    update_required = client_ver_tuple < min_ver_tuple
+    
+    return VersionResponse(
+        version=server_version,
+        min_client_version=min_client_version,
+        update_required=update_required,
+        update_message=update_message if update_required else None
     )
