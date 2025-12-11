@@ -1,11 +1,13 @@
-version: "3.9"
+version: "4.9"
 
 services:
   db:
     image: postgres:15
-    container_name: windsurf-db
+    container_name: windsurf-db-pro
     env_file:
       - .env
+    ports:
+      - "5432:5432"  # 暴露 PostgreSQL 端口供外部连接
     volumes:
       - ./db_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,13 +19,13 @@ services:
 
   app:
     build: .
-    container_name: windsurf-backend
+    container_name: windsurf-backend-pro
     depends_on:
       db:
         condition: service_healthy
     env_file:
       - .env
     ports:
-      - "8000:8000"  # 允许公网访问（请确保服务器防火墙和安全组已配置）
+      - "8010:8000"  # 允许公网访问（请确保服务器防火墙和安全组已配置）
     restart: unless-stopped
 

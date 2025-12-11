@@ -99,6 +99,98 @@
         </el-form>
     </el-card>
 
+    <!-- Firebase API Key 配置 -->
+    <el-card class="box-card" style="margin-bottom: 20px;">
+        <template #header>
+            <div class="card-header">
+                <span><i class="bi bi-key-fill"></i> Firebase API Key 配置</span>
+                <div>
+                    <el-button @click="handleTestFirebase" :loading="testing" :icon="Connection">测试连接</el-button>
+                    <el-button type="primary" @click="handleSaveFirebase" :loading="savingFirebase" :icon="Check">保存设置</el-button>
+                </div>
+            </div>
+        </template>
+
+        <el-form :model="firebaseForm" label-width="160px" style="max-width: 800px;">
+            <el-form-item label="Firebase API Key">
+                <el-input 
+                    v-model="firebaseForm.firebase_api_key" 
+                    placeholder="AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                    style="width: 500px;"
+                    show-password>
+                    <template #prepend>
+                        <i class="bi bi-shield-lock"></i>
+                    </template>
+                </el-input>
+                <div style="color: #909399; font-size: 13px; margin-top: 6px;">
+                    <i class="bi bi-info-circle"></i> 用于账号密码登录功能，获取 Windsurf API Key
+                </div>
+            </el-form-item>
+
+            <el-alert
+                v-if="firebaseForm.using_env"
+                title="环境变量配置优先"
+                type="warning"
+                :closable="false"
+                style="margin-bottom: 20px;">
+                <template #default>
+                    <div style="line-height: 1.8;">
+                        <p style="margin: 0 0 8px 0;"><strong>⚠️ 检测到环境变量配置：</strong></p>
+                        <p style="margin: 0; font-family: monospace; background: #f5f5f5; padding: 8px; border-radius: 4px;">
+                            FIREBASE_API_KEY={{ firebaseForm.env_firebase_api_key }}
+                        </p>
+                        <p style="margin: 8px 0 0 0; color: #E6A23C;">
+                            系统将优先使用环境变量中的配置，数据库配置将被忽略。
+                        </p>
+                    </div>
+                </template>
+            </el-alert>
+
+            <el-divider></el-divider>
+
+            <el-alert
+                title="如何获取 Firebase API Key"
+                type="info"
+                :closable="false"
+                style="margin-bottom: 20px;">
+                <template #default>
+                    <div style="line-height: 1.8;">
+                        <p style="margin: 0 0 8px 0;"><strong>方法 1：浏览器开发者工具（推荐）</strong></p>
+                        <ol style="margin: 4px 0 12px 20px; padding: 0;">
+                            <li>访问 <a href="https://windsurf.com" target="_blank">https://windsurf.com</a></li>
+                            <li>按 F12 打开开发者工具</li>
+                            <li>切换到 Network（网络）标签</li>
+                            <li>刷新页面（F5）</li>
+                            <li>搜索 "firebase" 或 "identitytoolkit"</li>
+                            <li>在请求 URL 中找到 key= 参数</li>
+                        </ol>
+                        <p style="margin: 0 0 4px 0;"><strong>格式：</strong>以 AIza 开头，共 39 个字符</p>
+                        <p style="margin: 0; font-family: monospace; background: #f5f5f5; padding: 8px; border-radius: 4px;">
+                            AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+                        </p>
+                    </div>
+                </template>
+            </el-alert>
+
+            <el-alert
+                title="测试说明"
+                type="success"
+                :closable="false">
+                <template #default>
+                    <div style="line-height: 1.8;">
+                        <p style="margin: 0 0 8px 0;"><strong>✅ 测试连接功能：</strong></p>
+                        <ul style="margin: 4px 0 0 20px; padding: 0;">
+                            <li>点击"测试连接"按钮验证 API Key 是否有效</li>
+                            <li>测试会向 Firebase 发送一个测试请求</li>
+                            <li>如果返回正常错误（如邮箱不存在），说明 Key 有效</li>
+                            <li>如果返回 API Key 无效错误，需要重新获取</li>
+                        </ul>
+                    </div>
+                </template>
+            </el-alert>
+        </el-form>
+    </el-card>
+
     <!-- 配置预览 -->
     <el-card class="box-card">
         <template #header>
@@ -147,14 +239,22 @@ createApp({
         // 图标
         const Check = ElementPlusIconsVue.Check;
         const Refresh = ElementPlusIconsVue.Refresh;
+        const Connection = ElementPlusIconsVue.Connection;
 
         // 数据
         const loading = ref(false);
         const saving = ref(false);
+        const savingFirebase = ref(false);
+        const testing = ref(false);
         const versionForm = ref({
             server_version: '',
             min_client_version: '',
             update_message: ''
+        });
+        const firebaseForm = ref({
+            firebase_api_key: '',
+            env_firebase_api_key: '',
+            using_env: false
         });
 
         // 加载配置
@@ -163,6 +263,11 @@ createApp({
             try {
                 const response = await axios.get('/admin/api/settings/version');
                 versionForm.value = response.data;
+                
+                // 加载 Firebase 配置
+                const firebaseResponse = await axios.get('/admin/api/settings/firebase');
+                firebaseForm.value = firebaseResponse.data;
+                
                 ElMessage.success('配置加载成功');
             } catch (error) {
                 ElMessage.error('加载失败: ' + (error.response?.data?.detail || error.message));
@@ -236,14 +341,77 @@ createApp({
             return 'equal';
         };
 
+        // 保存 Firebase 配置
+        const handleSaveFirebase = async () => {
+            if (!firebaseForm.value.firebase_api_key) {
+                ElMessage.error('Firebase API Key 不能为空');
+                return;
+            }
+
+            // 验证格式
+            if (!firebaseForm.value.firebase_api_key.startsWith('AIza') || 
+                firebaseForm.value.firebase_api_key.length !== 39) {
+                ElMessage.error('Firebase API Key 格式不正确（应以 AIza 开头，共39个字符）');
+                return;
+            }
+
+            savingFirebase.value = true;
+            try {
+                const formData = new FormData();
+                formData.append('firebase_api_key', firebaseForm.value.firebase_api_key);
+                
+                const response = await axios.post('/admin/api/settings/firebase', formData);
+                ElMessage.success(response.data.message);
+                
+                if (response.data.warning) {
+                    ElMessage.warning(response.data.warning);
+                }
+                
+                // 重新加载配置
+                await loadConfig();
+            } catch (error) {
+                ElMessage.error('保存失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                savingFirebase.value = false;
+            }
+        };
+
+        // 测试 Firebase API Key
+        const handleTestFirebase = async () => {
+            if (!firebaseForm.value.firebase_api_key) {
+                ElMessage.error('请先输入 Firebase API Key');
+                return;
+            }
+
+            testing.value = true;
+            try {
+                const formData = new FormData();
+                formData.append('firebase_api_key', firebaseForm.value.firebase_api_key);
+                
+                const response = await axios.post('/admin/api/settings/firebase/test', formData);
+                
+                if (response.data.valid) {
+                    ElMessage.success(response.data.message);
+                } else {
+                    ElMessage.error(response.data.message);
+                }
+            } catch (error) {
+                ElMessage.error('测试失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                testing.value = false;
+            }
+        };
+
         onMounted(() => {
             loadConfig();
         });
 
         return {
-            Check, Refresh,
-            loading, saving, versionForm,
-            loadConfig, handleSave, handleRefresh, compareVersions
+            Check, Refresh, Connection,
+            loading, saving, savingFirebase, testing,
+            versionForm, firebaseForm,
+            loadConfig, handleSave, handleRefresh, compareVersions,
+            handleSaveFirebase, handleTestFirebase
         };
     }
 }).use(ElementPlus).mount('#settingsApp');

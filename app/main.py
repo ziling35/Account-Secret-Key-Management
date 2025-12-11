@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -32,7 +32,11 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 401 and request.url.path.startswith("/admin") and not request.url.path.startswith("/admin/login"):
         return RedirectResponse(url="/admin/login")
-    raise exc
+    # 返回 JSON 响应而不是 raise，避免被当成未处理异常导致 500 错误
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 # 注册路由
 app.include_router(admin.router)

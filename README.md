@@ -23,6 +23,7 @@
 
 ### 客户端API
 - 🔐 **密钥验证** - 使用API密钥进行身份验证
+- 🔑 **账号密码登录** - 支持通过 Windsurf 账号密码自动获取 API Key
 - ⏱️ **频率限制** - 每5分钟只能请求一次账号
 - ⏰ **时效管理** - 密钥首次使用时激活，自动计算过期时间
 - 📈 **请求统计** - 记录请求次数、IP和时间
@@ -109,6 +110,37 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## API使用说明
+
+### 🆕 账号密码登录（新功能）
+
+通过 Windsurf 账号密码自动获取 API Key，无需手动上传账号文件。
+
+**请求示例**:
+```bash
+curl -X POST "http://localhost:8000/api/client/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "your_email@example.com",
+    "password": "your_password"
+  }'
+```
+
+**响应示例**:
+```json
+{
+  "success": true,
+  "message": "登录成功并创建新账号",
+  "data": {
+    "email": "your_email@example.com",
+    "api_key": "sk-ws-...",
+    "name": "用户名",
+    "status": "unused",
+    "created_at": "2024-01-01T00:00:00"
+  }
+}
+```
+
+> 📖 详细文档请查看 [LOGIN_FEATURE.md](LOGIN_FEATURE.md)
 
 ### 客户端获取账号
 
@@ -206,10 +238,13 @@ Account-Secret-Key-Management/
 │   ├── schemas.py        # Pydantic模型
 │   ├── auth.py           # 认证模块
 │   ├── utils.py          # 工具函数
+│   ├── windsurf_login.py # 🆕 Windsurf 登录服务
 │   └── main.py           # 主应用
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
+├── test_login.py         # 🆕 登录功能测试脚本
+├── LOGIN_FEATURE.md      # 🆕 登录功能详细文档
 └── README.md
 ```
 
@@ -226,6 +261,7 @@ Account-Secret-Key-Management/
 | `SECRET_KEY` | 应用密钥 | `random-secret-key` |
 | `INTERNAL_UPLOAD_TOKEN` | 内部上传令牌 | `your-internal-token` |
 | `ACCOUNT_EXPIRY_DAYS` | 未使用账号自动过期天数 | `6` |
+| `FIREBASE_API_KEY` | 🆕 Firebase API Key（可选） | `AIzaSy...` |
 
 ## 管理功能说明
 

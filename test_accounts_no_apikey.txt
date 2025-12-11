@@ -1,0 +1,14 @@
+Account 1:
+  Email: test1@example.com
+  Name: Test User 1
+  Password: password123
+
+Account 2:
+  Email: test2@example.com
+  Name: Test User 2
+  Password: password456
+
+Account 3:
+  Email: test3@example.com
+  Name: Test User 3
+  Password: password789

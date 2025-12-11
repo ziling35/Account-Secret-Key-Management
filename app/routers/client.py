@@ -5,10 +5,11 @@ import math
 import os
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config
-from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement
+from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse
 from app.auth import get_api_key
 from app.utils import calculate_remaining_time
+from app.windsurf_login import windsurf_login
 
 router = APIRouter(prefix="/api/client", tags=["客户端"])
 
@@ -101,13 +102,68 @@ async def get_account(
     if expired_accounts > 0:
         db.commit()
     
-    # 获取未使用的账号，优先获取创建时间最久的
-    account = db.query(Account).filter(
+    # 查询该密钥之前获取过的账号邮箱列表
+    previously_assigned_emails = db.query(Account.email).filter(
+        Account.assigned_to_key == api_key
+    ).all()
+    previously_assigned_emails = [email[0] for email in previously_assigned_emails]
+    
+    # 获取未使用的账号，排除该密钥之前获取过的账号，优先获取创建时间最久的
+    query = db.query(Account).filter(
         Account.status == AccountStatus.unused
-    ).order_by(Account.created_at.asc()).first()
+    )
+    
+    # 如果有之前获取过的账号，排除它们
+    if previously_assigned_emails:
+        query = query.filter(Account.email.notin_(previously_assigned_emails))
+    
+    account = query.order_by(Account.created_at.asc()).first()
     
     if not account:
-        raise HTTPException(status_code=404, detail="暂无可用账号")
+        # 如果没有新账号了，检查是否所有账号都被该密钥使用过
+        all_unused_count = db.query(Account).filter(
+            Account.status == AccountStatus.unused
+        ).count()
+        
+        if all_unused_count > 0:
+            raise HTTPException(
+                status_code=404, 
+                detail="暂无新账号可用（所有未使用账号都已被该密钥获取过）"
+            )
+        else:
+            raise HTTPException(status_code=404, detail="暂无可用账号")
+    
+    # 检查账号是否有 API Key，如果没有则自动登录获取
+    if not account.api_key or account.api_key.strip() == '':
+        try:
+            # 通过登录获取 API Key
+            login_result = await windsurf_login(
+                email=account.email,
+                password=account.password,
+                db=db
+            )
+            
+            # 更新账号的 API Key
+            account.api_key = login_result['api_key']
+            # 如果名字为空，也更新名字
+            if not account.name or account.name.strip() == '':
+                account.name = login_result['name']
+            
+            db.commit()
+        except Exception as e:
+            # 登录失败，返回错误（使用403而不是500）
+            error_msg = str(e)
+            # 如果是账号池或额度相关的错误，明确提示
+            if any(keyword in error_msg.lower() for keyword in ['quota', 'insufficient', '额度', '账号池', '账号不足']):
+                raise HTTPException(
+                    status_code=403,
+                    detail="账号额度已用完，请购买新的额度"
+                )
+            # 其他登录失败错误
+            raise HTTPException(
+                status_code=403,
+                detail=f"账号登录失败: {error_msg}"
+            )
     
     # 更新账号状态
     account.status = AccountStatus.used
@@ -240,3 +296,112 @@ async def check_version(
         update_required=update_required,
         update_message=update_message if update_required else None
     )
+
+@router.get("/announcement", response_model=AnnouncementResponse)
+async def get_announcement(db: Session = Depends(get_db)):
+    """
+    获取当前启用的公告
+    - 公开接口，无需认证
+    - 返回当前启用的公告内容
+    - 如果没有启用的公告，返回空内容
+    """
+    try:
+        # 查询启用的公告（按优先级和创建时间排序）
+        announcement = db.query(Announcement).filter(
+            Announcement.is_active == True
+        ).order_by(
+            Announcement.priority.desc(),
+            Announcement.created_at.desc()
+        ).first()
+        
+        if not announcement:
+            # 没有启用的公告，返回空内容
+            return AnnouncementResponse(content="")
+        
+        return AnnouncementResponse(
+            content=announcement.content,
+            created_at=announcement.created_at.isoformat() if announcement.created_at else None,
+            updated_at=announcement.updated_at.isoformat() if announcement.updated_at else None
+        )
+    except Exception as e:
+        # 出错时返回空内容，不影响客户端使用
+        return AnnouncementResponse(content="")
+
+@router.post("/login", response_model=LoginResponse)
+async def login_with_account(
+    login_data: LoginRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    通过账号密码登录并获取 API Key
+    - 公开接口，无需认证
+    - 自动通过 Firebase 和 Windsurf API 获取 API Key
+    - 如果账号已存在则返回现有信息，否则创建新账号
+    """
+    try:
+        # 检查账号是否已存在
+        existing_account = db.query(Account).filter(
+            Account.email == login_data.email
+        ).first()
+        
+        if existing_account:
+            # 账号已存在，直接返回
+            return LoginResponse(
+                success=True,
+                message="登录成功（使用已有账号）",
+                data={
+                    "email": existing_account.email,
+                    "api_key": existing_account.api_key,
+                    "name": existing_account.name,
+                    "status": existing_account.status.value,
+                    "created_at": existing_account.created_at.isoformat()
+                }
+            )
+        
+        # 账号不存在，通过模拟登录获取 API Key
+        try:
+            result = await windsurf_login(
+                email=login_data.email,
+                password=login_data.password,
+                db=db
+            )
+            
+            # 创建新账号
+            new_account = Account(
+                email=result['email'],
+                password=result['password'],
+                api_key=result['api_key'],
+                name=result['name'],
+                status=AccountStatus.unused,
+                created_at=datetime.utcnow()
+            )
+            
+            db.add(new_account)
+            db.commit()
+            db.refresh(new_account)
+            
+            return LoginResponse(
+                success=True,
+                message="登录成功并创建新账号",
+                data={
+                    "email": new_account.email,
+                    "api_key": new_account.api_key,
+                    "name": new_account.name,
+                    "status": new_account.status.value,
+                    "created_at": new_account.created_at.isoformat()
+                }
+            )
+        
+        except Exception as login_error:
+            return LoginResponse(
+                success=False,
+                message=f"登录失败: {str(login_error)}",
+                data=None
+            )
+    
+    except Exception as e:
+        return LoginResponse(
+            success=False,
+            message=f"处理请求失败: {str(e)}",
+            data=None
+        )

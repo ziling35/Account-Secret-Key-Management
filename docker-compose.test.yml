@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: windsurf-test
+    environment:
+      - DATABASE_URL=sqlite:///./test.db
+      - ADMIN_USERNAME=ziling
+      - ADMIN_PASSWORD=huoyifan412728
+      - SECRET_KEY=test-secret-key-for-development
+      - INTERNAL_UPLOAD_TOKEN=test-internal-token
+      - ACCOUNT_EXPIRY_DAYS=6
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./test_data:/app/test_data
+    restart: unless-stopped

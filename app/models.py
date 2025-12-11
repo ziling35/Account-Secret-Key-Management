@@ -23,8 +23,8 @@ class Account(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     password = Column(String, nullable=False)
-    api_key = Column(String, nullable=False)
-    name = Column(String, nullable=False)
+    api_key = Column(String, nullable=True)  # 允许为空，使用时自动获取
+    name = Column(String, nullable=True)  # 允许为空，使用时自动获取
     status = Column(SQLEnum(AccountStatus), default=AccountStatus.unused, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     assigned_at = Column(DateTime, nullable=True)
@@ -59,3 +59,15 @@ class Config(Base):
     value = Column(String, nullable=False)
     description = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class Announcement(Base):
+    __tablename__ = "announcements"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    content = Column(String, nullable=False)  # 公告内容
+    is_active = Column(Boolean, default=False, nullable=False, index=True)  # 是否启用
+    priority = Column(Integer, default=0, nullable=False)  # 优先级（预留）
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_by = Column(String, nullable=True)  # 创建人
+    updated_by = Column(String, nullable=True)  # 更新人

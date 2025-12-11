@@ -20,7 +20,9 @@ def parse_account_file(content: str) -> List[Dict[str, str]]:
       邮箱: 或 Email:
       姓名: 或 Name:
       密码: 或 Password:
-      API密钥: 或 API Key:
+      API密钥: 或 API Key: (可选)
+    
+    注意：API Key 为可选字段，如果没有提供，将在使用时自动通过登录获取
     """
     accounts = []
     
@@ -37,13 +39,15 @@ def parse_account_file(content: str) -> List[Dict[str, str]]:
         password_match = re.search(r'(?:密码|Password)\s*[:：]\s*(.+)', block, re.IGNORECASE)
         api_key_match = re.search(r'(?:API密钥|API\s*Key)\s*[:：]\s*(.+)', block, re.IGNORECASE)
         
-        if all([email_match, name_match, password_match, api_key_match]):
-            accounts.append({
+        # 必须有邮箱、姓名和密码，API Key 可选
+        if all([email_match, name_match, password_match]):
+            account_data = {
                 'email': email_match.group(1).strip(),
                 'name': name_match.group(1).strip(),
                 'password': password_match.group(1).strip(),
-                'api_key': api_key_match.group(1).strip()
-            })
+                'api_key': api_key_match.group(1).strip() if api_key_match else ''
+            }
+            accounts.append(account_data)
     
     return accounts
 

@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+
+{% block title %}公告管理 - Windsurf账号池管理系统{% endblock %}
+
+{% block content %}
+<div id="app">
+    <div class="page-header">
+        <h1><i class="bi bi-megaphone"></i> 公告管理</h1>
+        <el-button type="primary" @click="showCreateDialog" icon="Plus">
+            创建公告
+        </el-button>
+    </div>
+
+    <!-- 公告列表 -->
+    <el-card class="box-card" v-loading="loading">
+        <div v-if="announcements.length === 0" class="empty-state">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+            <p>暂无公告</p>
+        </div>
+        
+        <div v-else>
+            <el-table :data="announcements" style="width: 100%">
+                <el-table-column prop="id" label="ID" width="80"></el-table-column>
+                
+                <el-table-column label="公告内容" min-width="300">
+                    <template #default="scope">
+                        <div class="announcement-preview">
+                            [[ scope.row.content.substring(0, 100) ]]
+                            <span v-if="scope.row.content.length > 100">...</span>
+                        </div>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="状态" width="100">
+                    <template #default="scope">
+                        <el-tag :type="scope.row.is_active ? 'success' : 'info'">
+                            [[ scope.row.is_active ? '启用' : '禁用' ]]
+                        </el-tag>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="创建时间" width="180">
+                    <template #default="scope">
+                        [[ formatDate(scope.row.created_at) ]]
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="创建人" width="120">
+                    <template #default="scope">
+                        [[ scope.row.created_by || '-' ]]
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="操作" width="220" fixed="right">
+                    <template #default="scope">
+                        <el-button 
+                            size="small" 
+                            @click="toggleStatus(scope.row)"
+                            :type="scope.row.is_active ? 'warning' : 'success'">
+                            [[ scope.row.is_active ? '禁用' : '启用' ]]
+                        </el-button>
+                        <el-button 
+                            size="small" 
+                            type="primary"
+                            @click="showEditDialog(scope.row)">
+                            编辑
+                        </el-button>
+                        <el-button 
+                            size="small" 
+                            type="danger"
+                            @click="deleteAnnouncement(scope.row)">
+                            删除
+                        </el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </el-card>
+
+    <!-- 创建/编辑对话框 -->
+    <el-dialog 
+        :title="dialogMode === 'create' ? '创建公告' : '编辑公告'"
+        v-model="dialogVisible"
+        width="600px">
+        <el-form :model="form" label-width="80px">
+            <el-form-item label="公告内容">
+                <el-input 
+                    v-model="form.content"
+                    type="textarea"
+                    :rows="10"
+                    placeholder="请输入公告内容，支持多行文本"
+                    maxlength="1000"
+                    show-word-limit>
+                </el-input>
+            </el-form-item>
+            
+            <el-form-item label="启用状态">
+                <el-switch 
+                    v-model="form.is_active"
+                    active-text="启用"
+                    inactive-text="禁用">
+                </el-switch>
+                <div style="color: #999; font-size: 12px; margin-top: 5px;">
+                    ⚠️ 启用此公告将自动禁用其他公告
+                </div>
+            </el-form-item>
+        </el-form>
+        
+        <template #footer>
+            <el-button @click="dialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitForm" :loading="submitting">
+                [[ dialogMode === 'create' ? '创建' : '保存' ]]
+            </el-button>
+        </template>
+    </el-dialog>
+</div>
+
+<style>
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.page-header h1 {
+    margin: 0;
+    font-size: 24px;
+    color: #333;
+}
+
+.box-card {
+    margin-top: 20px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 0;
+    color: #999;
+}
+
+.announcement-preview {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.6;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+createApp({
+    delimiters: ['[[', ']]'],
+    data() {
+        return {
+            loading: false,
+            submitting: false,
+            announcements: [],
+            dialogVisible: false,
+            dialogMode: 'create', // 'create' or 'edit'
+            form: {
+                id: null,
+                content: '',
+                is_active: true
+            }
+        };
+    },
+    mounted() {
+        this.loadAnnouncements();
+    },
+    methods: {
+        async loadAnnouncements() {
+            this.loading = true;
+            try {
+                const response = await axios.get('/admin/api/announcements/list');
+                if (response.data.success) {
+                    this.announcements = response.data.data;
+                }
+            } catch (error) {
+                ElMessage.error('加载公告列表失败');
+                console.error(error);
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        showCreateDialog() {
+            this.dialogMode = 'create';
+            this.form = {
+                id: null,
+                content: '',
+                is_active: true
+            };
+            this.dialogVisible = true;
+        },
+        
+        showEditDialog(row) {
+            this.dialogMode = 'edit';
+            this.form = {
+                id: row.id,
+                content: row.content,
+                is_active: row.is_active
+            };
+            this.dialogVisible = true;
+        },
+        
+        async submitForm() {
+            if (!this.form.content.trim()) {
+                ElMessage.warning('请输入公告内容');
+                return;
+            }
+            
+            this.submitting = true;
+            try {
+                const formData = new FormData();
+                formData.append('content', this.form.content);
+                formData.append('is_active', this.form.is_active);
+                
+                let response;
+                if (this.dialogMode === 'create') {
+                    response = await axios.post('/admin/api/announcements/create', formData);
+                } else {
+                    response = await axios.post(`/admin/api/announcements/${this.form.id}/update`, formData);
+                }
+                
+                if (response.data.success) {
+                    ElMessage.success(response.data.message);
+                    this.dialogVisible = false;
+                    this.loadAnnouncements();
+                }
+            } catch (error) {
+                ElMessage.error(error.response?.data?.detail || '操作失败');
+            } finally {
+                this.submitting = false;
+            }
+        },
+        
+        async toggleStatus(row) {
+            try {
+                const response = await axios.post(`/admin/api/announcements/${row.id}/toggle`);
+                if (response.data.success) {
+                    ElMessage.success(response.data.message);
+                    this.loadAnnouncements();
+                }
+            } catch (error) {
+                ElMessage.error('切换状态失败');
+            }
+        },
+        
+        async deleteAnnouncement(row) {
+            try {
+                await ElMessageBox.confirm(
+                    '确定要删除这条公告吗？',
+                    '确认删除',
+                    {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }
+                );
+                
+                const response = await axios.post(`/admin/api/announcements/${row.id}/delete`);
+                if (response.data.success) {
+                    ElMessage.success('删除成功');
+                    this.loadAnnouncements();
+                }
+            } catch (error) {
+                if (error !== 'cancel') {
+                    ElMessage.error('删除失败');
+                }
+            }
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    }
+}).use(ElementPlus).mount('#app');
+</script>
+{% endblock %}

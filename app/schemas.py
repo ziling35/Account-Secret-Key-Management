@@ -90,3 +90,44 @@ class VersionResponse(BaseModel):
     min_client_version: str
     update_required: bool
     update_message: Optional[str] = None
+
+# 公告相关
+class AnnouncementResponse(BaseModel):
+    """客户端公告响应"""
+    content: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class AnnouncementCreate(BaseModel):
+    """创建公告"""
+    content: str
+    is_active: bool = True
+
+class AnnouncementUpdate(BaseModel):
+    """更新公告"""
+    content: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class AnnouncementListItem(BaseModel):
+    """公告列表项"""
+    id: int
+    content: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+# 登录相关
+class LoginRequest(BaseModel):
+    """账号密码登录请求"""
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    """登录响应"""
+    success: bool
+    message: str
+    data: Optional[dict] = None  # 包含 email, api_key, name 等信息

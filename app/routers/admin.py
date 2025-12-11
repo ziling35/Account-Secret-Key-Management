@@ -7,9 +7,10 @@ from typing import List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement
 from app.schemas import (
-    AccountResponse, KeyCreate, KeyResponse, StatsResponse
+    AccountResponse, KeyCreate, KeyResponse, StatsResponse,
+    AnnouncementCreate, AnnouncementUpdate, AnnouncementListItem
 )
 from app.auth import verify_admin, create_session, check_credentials
 from app.utils import (
@@ -76,6 +77,11 @@ async def keys_page(request: Request, username: str = Depends(verify_admin)):
 async def accounts_page(request: Request, username: str = Depends(verify_admin)):
     """账号管理页面"""
     return templates.TemplateResponse("accounts.html", {"request": request})
+
+@router.get("/announcements", response_class=HTMLResponse)
+async def announcements_page(request: Request, username: str = Depends(verify_admin)):
+    """公告管理页面"""
+    return templates.TemplateResponse("announcements.html", {"request": request})
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, username: str = Depends(verify_admin)):
@@ -649,6 +655,143 @@ async def update_version_settings(
         "message": "版本配置已更新"
     }
 
+@router.get("/api/settings/firebase")
+async def get_firebase_settings(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取 Firebase API Key 配置"""
+    firebase_key = db.query(Config).filter(Config.key == "firebase_api_key").first()
+    
+    # 获取环境变量中的配置（优先级更高）
+    env_firebase_key = os.getenv("FIREBASE_API_KEY")
+    
+    return {
+        "success": True,
+        "firebase_api_key": firebase_key.value if firebase_key else "",
+        "env_firebase_api_key": env_firebase_key if env_firebase_key else "",
+        "using_env": bool(env_firebase_key),
+        "message": "环境变量配置优先级更高" if env_firebase_key else "使用数据库配置"
+    }
+
+@router.post("/api/settings/firebase")
+async def update_firebase_settings(
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新 Firebase API Key 配置"""
+    form_data = await request.form()
+    firebase_api_key = form_data.get("firebase_api_key", "").strip()
+    
+    if not firebase_api_key:
+        raise HTTPException(status_code=400, detail="Firebase API Key 不能为空")
+    
+    # 验证 API Key 格式
+    if not firebase_api_key.startswith("AIza") or len(firebase_api_key) != 39:
+        raise HTTPException(
+            status_code=400, 
+            detail="Firebase API Key 格式不正确（应以 AIza 开头，共39个字符）"
+        )
+    
+    # 更新或创建配置
+    config = db.query(Config).filter(Config.key == "firebase_api_key").first()
+    if config:
+        config.value = firebase_api_key
+        config.updated_at = datetime.utcnow()
+    else:
+        config = Config(
+            key="firebase_api_key",
+            value=firebase_api_key,
+            description="Firebase API Key（用于账号登录）"
+        )
+        db.add(config)
+    
+    db.commit()
+    
+    # 检查是否有环境变量配置
+    env_key = os.getenv("FIREBASE_API_KEY")
+    warning = ""
+    if env_key:
+        warning = "注意：环境变量 FIREBASE_API_KEY 已配置，将优先使用环境变量的值"
+    
+    return {
+        "success": True,
+        "message": "Firebase API Key 已更新",
+        "warning": warning
+    }
+
+@router.post("/api/settings/firebase/test")
+async def test_firebase_key(
+    request: Request,
+    username: str = Depends(verify_admin)
+):
+    """测试 Firebase API Key 是否有效"""
+    import httpx
+    
+    form_data = await request.form()
+    firebase_api_key = form_data.get("firebase_api_key", "").strip()
+    
+    if not firebase_api_key:
+        raise HTTPException(status_code=400, detail="Firebase API Key 不能为空")
+    
+    try:
+        # 使用一个测试邮箱和密码测试 API Key
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={firebase_api_key}',
+                json={
+                    'email': 'test@example.com',
+                    'password': 'testpassword',
+                    'returnSecureToken': True,
+                },
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            # 如果返回 400 且错误是 EMAIL_NOT_FOUND 或 INVALID_PASSWORD，说明 API Key 有效
+            if response.status_code == 400:
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('message', '')
+                
+                if error_msg in ['EMAIL_NOT_FOUND', 'INVALID_PASSWORD', 'INVALID_EMAIL']:
+                    return {
+                        "success": True,
+                        "valid": True,
+                        "message": "Firebase API Key 有效"
+                    }
+                elif 'API key not valid' in error_msg:
+                    return {
+                        "success": True,
+                        "valid": False,
+                        "message": "Firebase API Key 无效"
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "valid": False,
+                        "message": f"测试失败: {error_msg}"
+                    }
+            elif response.status_code == 200:
+                # 不太可能，但如果成功了说明 Key 有效
+                return {
+                    "success": True,
+                    "valid": True,
+                    "message": "Firebase API Key 有效"
+                }
+            else:
+                return {
+                    "success": True,
+                    "valid": False,
+                    "message": f"测试失败: HTTP {response.status_code}"
+                }
+                
+    except Exception as e:
+        return {
+            "success": True,
+            "valid": False,
+            "message": f"测试失败: {str(e)}"
+        }
+
 # ==================== 工具函数 ====================
 
 def get_statistics(db: Session) -> StatsResponse:
@@ -673,3 +816,180 @@ def get_statistics(db: Session) -> StatsResponse:
         active_keys=active_keys,
         expired_keys=expired_keys
     )
+
+# ==================== 公告管理 API ====================
+
+@router.get("/api/announcements/list")
+async def list_announcements(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取所有公告列表"""
+    announcements = db.query(Announcement).order_by(
+        Announcement.created_at.desc()
+    ).all()
+    
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": a.id,
+                "content": a.content,
+                "is_active": a.is_active,
+                "created_at": a.created_at.isoformat(),
+                "updated_at": a.updated_at.isoformat(),
+                "created_by": a.created_by
+            } for a in announcements
+        ],
+        "total": len(announcements)
+    }
+
+@router.post("/api/announcements/create")
+async def create_announcement(
+    content: str = Form(...),
+    is_active: bool = Form(True),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """创建新公告"""
+    try:
+        # 如果新公告是启用状态，禁用所有其他公告
+        if is_active:
+            db.query(Announcement).update({"is_active": False})
+        
+        # 创建新公告
+        announcement = Announcement(
+            content=content,
+            is_active=is_active,
+            created_by=username,
+            updated_by=username
+        )
+        
+        db.add(announcement)
+        db.commit()
+        db.refresh(announcement)
+        
+        return {
+            "success": True,
+            "message": "公告创建成功",
+            "data": {
+                "id": announcement.id,
+                "content": announcement.content,
+                "is_active": announcement.is_active
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建公告失败: {str(e)}")
+
+@router.post("/api/announcements/{announcement_id}/update")
+async def update_announcement(
+    announcement_id: int,
+    content: str = Form(None),
+    is_active: bool = Form(None),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新公告"""
+    try:
+        announcement = db.query(Announcement).filter(
+            Announcement.id == announcement_id
+        ).first()
+        
+        if not announcement:
+            raise HTTPException(status_code=404, detail="公告不存在")
+        
+        # 如果要启用此公告，禁用其他公告
+        if is_active:
+            db.query(Announcement).filter(
+                Announcement.id != announcement_id
+            ).update({"is_active": False})
+        
+        # 更新字段
+        if content is not None:
+            announcement.content = content
+        if is_active is not None:
+            announcement.is_active = is_active
+        
+        announcement.updated_by = username
+        announcement.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "公告更新成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新公告失败: {str(e)}")
+
+@router.post("/api/announcements/{announcement_id}/delete")
+async def delete_announcement(
+    announcement_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除公告"""
+    try:
+        announcement = db.query(Announcement).filter(
+            Announcement.id == announcement_id
+        ).first()
+        
+        if not announcement:
+            raise HTTPException(status_code=404, detail="公告不存在")
+        
+        db.delete(announcement)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "公告删除成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"删除公告失败: {str(e)}")
+
+@router.post("/api/announcements/{announcement_id}/toggle")
+async def toggle_announcement(
+    announcement_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """切换公告启用状态"""
+    try:
+        announcement = db.query(Announcement).filter(
+            Announcement.id == announcement_id
+        ).first()
+        
+        if not announcement:
+            raise HTTPException(status_code=404, detail="公告不存在")
+        
+        # 切换状态
+        new_status = not announcement.is_active
+        
+        # 如果要启用，禁用其他公告
+        if new_status:
+            db.query(Announcement).filter(
+                Announcement.id != announcement_id
+            ).update({"is_active": False})
+        
+        announcement.is_active = new_status
+        announcement.updated_by = username
+        announcement.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"公告已{'启用' if new_status else '禁用'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"切换公告状态失败: {str(e)}")

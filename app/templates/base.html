@@ -35,6 +35,12 @@
                 </a>
             </li>
             <li>
+                <a href="/admin/announcements" class="{% if '/announcements' in request.url.path %}active{% endif %}">
+                    <i class="bi bi-megaphone"></i>
+                    <span>公告管理</span>
+                </a>
+            </li>
+            <li>
                 <a href="/admin/settings" class="{% if '/settings' in request.url.path %}active{% endif %}">
                     <i class="bi bi-gear"></i>
                     <span>系统设置</span>
