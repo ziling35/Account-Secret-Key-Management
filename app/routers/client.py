@@ -499,82 +499,41 @@ async def get_version_notes(db: Session = Depends(get_db)):
 
 
 @router.get("/plugin/list", response_model=PluginListResponse)
-async def get_plugin_list(
-    db: Session = Depends(get_db)
-):
+async def get_plugin_list(db: Session = Depends(get_db)):
     """
     获取插件列表
     - 公开接口，无需认证
-    - 返回所有可用插件的信息，供客户端动态渲染插件菜单
-    - 禁用的插件也会返回，由客户端决定是否显示
+    - 返回所有启用的插件信息，包含完整的客户端展示字段
     """
     try:
         plugins = db.query(PluginInfo).filter(
             PluginInfo.is_active == True
-        ).order_by(PluginInfo.id).all()
+        ).order_by(PluginInfo.sort_order, PluginInfo.id).all()
         
-        plugin_items = []
-        for plugin in plugins:
-            # 根据插件名称判断 IDE 类型和设置默认值
-            ide_type = "windsurf"
-            icon = "shield-check"
-            icon_gradient = ["#667eea", "#764ba2"]
-            display_name = plugin.plugin_name
-            description = plugin.update_description or ""
-            is_primary = True
-            
-            if "kiro" in plugin.plugin_name.lower():
-                ide_type = "kiro"
-                icon = "sparkles"
-                icon_gradient = ["#8b5cf6", "#6366f1"]
-                is_primary = False
-            
-            # 格式化显示名称
-            if plugin.plugin_name == "windsurf-continue-pro":
-                display_name = "Windsurf Continue Pro"
-                description = "专属定制版 - 与卡密系统完全打通"
-            elif plugin.plugin_name == "kiro-continue-pro":
-                display_name = "Kiro Continue Pro"
-                description = "Kiro IDE 专属版本 - 支持自动批准"
-            
-            # 构建功能列表
-            features = [
-                {"title": "与卡密完全打通", "description": "自动使用当前激活的卡密"},
-                {"title": "安全验证", "description": "定期检查卡密有效性，到期自动停止"},
-                {"title": "AI 持续对话", "description": "在同一对话中继续，不消耗新 credits"},
-                {"title": "专业界面", "description": "Windows 原生 GUI 对话框"}
-            ]
-            
-            # 构建使用步骤
-            usage_steps = [
-                {"step": 1, "title": "一键安装", "description": "点击「一键安装」按钮，自动完成安装、激活、配置 MCP、安装规则并重启"},
-                {"step": 2, "title": "开始使用", "description": "在 IDE 中正常使用 AI，结束时会自动弹出对话框"}
-            ]
-            
-            # 构建提示信息
-            tips = [
-                {"type": "success", "title": "激活码自动同步", "content": "客户端和插件共享激活码，一次激活全部搞定！"},
-                {"type": "warning", "title": "工作原理", "content": "插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续。"}
-            ]
-            
-            plugin_items.append(PluginListItem(
-                name=plugin.plugin_name,
-                display_name=display_name,
-                description=description,
-                ide_type=ide_type,
-                latest_version=plugin.current_version,
-                download_url=plugin.download_url,
-                icon=icon,
-                icon_gradient=icon_gradient,
-                features=features,
-                usage_steps=usage_steps,
-                tips=tips,
-                is_disabled=not plugin.is_active,
-                is_primary=is_primary
-            ))
+        plugin_items = [
+            PluginListItem(
+                name=p.plugin_name,
+                display_name=p.display_name or p.plugin_name.replace("-", " ").title(),
+                description=p.description or p.update_description or "",
+                ide_type=p.ide_type or "windsurf",
+                latest_version=p.current_version,
+                download_url=p.download_url,
+                is_primary=p.is_primary,
+                icon=p.icon or "shield-check",
+                icon_gradient=p.icon_gradient,
+                features=p.features,
+                usage_steps=p.usage_steps,
+                tips=p.tips,
+                mcp_config_path=p.mcp_config_path,
+                extensions_path=p.extensions_path,
+                mcp_extra_config=p.mcp_extra_config,
+                sort_order=p.sort_order
+            )
+            for p in plugins
+        ]
         
         return PluginListResponse(success=True, plugins=plugin_items)
-    except Exception as e:
+    except Exception:
         return PluginListResponse(success=False, plugins=[])
 
 

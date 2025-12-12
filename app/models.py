@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Date, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Date, Enum as SQLEnum, Text, JSON
 from datetime import datetime
 import enum
 from app.database import Base
@@ -91,16 +91,35 @@ class PluginInfo(Base):
     __tablename__ = "plugin_info"
     
     id = Column(Integer, primary_key=True, index=True)
-    plugin_name = Column(String, nullable=False, index=True)  # 插件名称，如 windsurf-continue-pro
+    plugin_name = Column(String, nullable=False, index=True, unique=True)  # 插件名称，如 windsurf-continue-pro
+    
+    # 基础版本管理字段
     current_version = Column(String, nullable=False)  # 当前版本号，如 1.0.0
     min_version = Column(String, nullable=True)  # 最低支持版本（低于此版本强制更新）
     download_url = Column(String, nullable=False)  # 插件下载地址
-    changelog = Column(String, nullable=True)  # 更新日志（支持 Markdown）
+    changelog = Column(Text, nullable=True)  # 更新日志（支持 Markdown）
     update_title = Column(String, nullable=True)  # 更新标题
-    update_description = Column(String, nullable=True)  # 更新描述（弹窗显示）
+    update_description = Column(Text, nullable=True)  # 更新描述（弹窗显示）
     is_force_update = Column(Boolean, default=False, nullable=False)  # 是否强制更新
     is_active = Column(Boolean, default=True, nullable=False, index=True)  # 是否启用
     file_size = Column(String, nullable=True)  # 文件大小，如 "31.87 KB"
     release_date = Column(DateTime, default=datetime.utcnow, nullable=False)  # 发布日期
+    
+    # 客户端展示字段
+    display_name = Column(String(100), nullable=True)  # 显示名称，如 "Windsurf Continue Pro"
+    description = Column(Text, nullable=True)  # 插件描述
+    ide_type = Column(String(50), default='windsurf', nullable=False, index=True)  # IDE类型: windsurf, kiro
+    icon = Column(String(50), default='shield-check', nullable=True)  # 图标名称（Lucide图标）
+    icon_gradient = Column(JSON, nullable=True)  # 图标渐变色，如 ["#667eea", "#764ba2"]
+    features = Column(JSON, nullable=True)  # 功能特性列表，如 [{"title": "...", "description": "..."}]
+    usage_steps = Column(JSON, nullable=True)  # 使用步骤，如 [{"step": 1, "title": "...", "description": "..."}]
+    tips = Column(JSON, nullable=True)  # 提示信息，如 [{"type": "success", "title": "...", "content": "..."}]
+    mcp_config_path = Column(String(255), nullable=True)  # MCP配置文件路径
+    extensions_path = Column(String(255), nullable=True)  # 扩展安装路径
+    mcp_extra_config = Column(JSON, nullable=True)  # MCP额外配置，如 {"autoApprove": ["ask_continue"]}
+    is_primary = Column(Boolean, default=False, nullable=False)  # 是否主要插件
+    sort_order = Column(Integer, default=0, nullable=False)  # 排序顺序
+    
+    # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

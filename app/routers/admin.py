@@ -1185,6 +1185,9 @@ async def get_plugins(
                 {
                     "id": p.id,
                     "plugin_name": p.plugin_name,
+                    "display_name": p.display_name,
+                    "description": p.description,
+                    "ide_type": p.ide_type,
                     "current_version": p.current_version,
                     "min_version": p.min_version,
                     "download_url": p.download_url,
@@ -1193,7 +1196,17 @@ async def get_plugins(
                     "update_description": p.update_description,
                     "is_force_update": p.is_force_update,
                     "is_active": p.is_active,
+                    "is_primary": p.is_primary,
                     "file_size": p.file_size,
+                    "icon": p.icon,
+                    "icon_gradient": p.icon_gradient,
+                    "features": p.features,
+                    "usage_steps": p.usage_steps,
+                    "tips": p.tips,
+                    "mcp_config_path": p.mcp_config_path,
+                    "extensions_path": p.extensions_path,
+                    "mcp_extra_config": p.mcp_extra_config,
+                    "sort_order": p.sort_order,
                     "release_date": p.release_date.isoformat() if p.release_date else None,
                     "created_at": p.created_at.isoformat() if p.created_at else None,
                     "updated_at": p.updated_at.isoformat() if p.updated_at else None
@@ -1210,13 +1223,28 @@ async def create_plugin(
     plugin_name: str = Form(...),
     current_version: str = Form(...),
     download_url: str = Form(...),
+    # 基础字段
+    display_name: str = Form(None),
+    description: str = Form(None),
+    ide_type: str = Form('windsurf'),
     min_version: str = Form(None),
     changelog: str = Form(None),
     update_title: str = Form(None),
     update_description: str = Form(None),
     is_force_update: bool = Form(False),
     is_active: bool = Form(True),
+    is_primary: bool = Form(False),
     file_size: str = Form(None),
+    sort_order: int = Form(0),
+    # 客户端展示字段
+    icon: str = Form(None),
+    icon_gradient: str = Form(None),
+    features: str = Form(None),
+    usage_steps: str = Form(None),
+    tips: str = Form(None),
+    mcp_config_path: str = Form(None),
+    extensions_path: str = Form(None),
+    mcp_extra_config: str = Form(None),
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
@@ -1227,8 +1255,21 @@ async def create_plugin(
         if existing:
             raise HTTPException(status_code=400, detail=f"插件 {plugin_name} 已存在")
         
+        # 解析JSON字段
+        import json
+        def parse_json_field(value):
+            if not value:
+                return None
+            try:
+                return json.loads(value)
+            except:
+                return None
+        
         plugin = PluginInfo(
             plugin_name=plugin_name,
+            display_name=display_name,
+            description=description,
+            ide_type=ide_type,
             current_version=current_version,
             min_version=min_version,
             download_url=download_url,
@@ -1237,7 +1278,17 @@ async def create_plugin(
             update_description=update_description,
             is_force_update=is_force_update,
             is_active=is_active,
+            is_primary=is_primary,
             file_size=file_size,
+            icon=icon,
+            icon_gradient=parse_json_field(icon_gradient),
+            features=parse_json_field(features),
+            usage_steps=parse_json_field(usage_steps),
+            tips=parse_json_field(tips),
+            mcp_config_path=mcp_config_path,
+            extensions_path=extensions_path,
+            mcp_extra_config=parse_json_field(mcp_extra_config),
+            sort_order=sort_order,
             release_date=datetime.utcnow()
         )
         
@@ -1257,13 +1308,28 @@ async def update_plugin(
     plugin_name: str = Form(None),
     current_version: str = Form(None),
     download_url: str = Form(None),
+    # 基础字段
+    display_name: str = Form(None),
+    description: str = Form(None),
+    ide_type: str = Form(None),
     min_version: str = Form(None),
     changelog: str = Form(None),
     update_title: str = Form(None),
     update_description: str = Form(None),
     is_force_update: bool = Form(None),
     is_active: bool = Form(None),
+    is_primary: bool = Form(None),
     file_size: str = Form(None),
+    sort_order: int = Form(None),
+    # 客户端展示字段
+    icon: str = Form(None),
+    icon_gradient: str = Form(None),
+    features: str = Form(None),
+    usage_steps: str = Form(None),
+    tips: str = Form(None),
+    mcp_config_path: str = Form(None),
+    extensions_path: str = Form(None),
+    mcp_extra_config: str = Form(None),
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
@@ -1273,8 +1339,26 @@ async def update_plugin(
         if not plugin:
             raise HTTPException(status_code=404, detail="插件不存在")
         
+        # 解析JSON字段
+        import json
+        def parse_json_field(value):
+            if value is None:
+                return None
+            if not value:
+                return None
+            try:
+                return json.loads(value)
+            except:
+                return None
+        
         if plugin_name is not None:
             plugin.plugin_name = plugin_name
+        if display_name is not None:
+            plugin.display_name = display_name
+        if description is not None:
+            plugin.description = description
+        if ide_type is not None:
+            plugin.ide_type = ide_type
         if current_version is not None:
             plugin.current_version = current_version
             plugin.release_date = datetime.utcnow()  # 更新版本时更新发布日期
@@ -1292,8 +1376,28 @@ async def update_plugin(
             plugin.is_force_update = is_force_update
         if is_active is not None:
             plugin.is_active = is_active
+        if is_primary is not None:
+            plugin.is_primary = is_primary
         if file_size is not None:
             plugin.file_size = file_size
+        if sort_order is not None:
+            plugin.sort_order = sort_order
+        if icon is not None:
+            plugin.icon = icon
+        if icon_gradient is not None:
+            plugin.icon_gradient = parse_json_field(icon_gradient)
+        if features is not None:
+            plugin.features = parse_json_field(features)
+        if usage_steps is not None:
+            plugin.usage_steps = parse_json_field(usage_steps)
+        if tips is not None:
+            plugin.tips = parse_json_field(tips)
+        if mcp_config_path is not None:
+            plugin.mcp_config_path = mcp_config_path
+        if extensions_path is not None:
+            plugin.extensions_path = extensions_path
+        if mcp_extra_config is not None:
+            plugin.mcp_extra_config = parse_json_field(mcp_extra_config)
         
         plugin.updated_at = datetime.utcnow()
         db.commit()

@@ -19,70 +19,63 @@
         </div>
         
         <div v-else>
-            <el-table :data="plugins" style="width: 100%">
-                <el-table-column prop="id" label="ID" width="60"></el-table-column>
-                
-                <el-table-column label="插件名称" width="200">
+            <el-table :data="plugins" style="width: 100%" stripe>
+                <el-table-column label="插件名称" min-width="180">
                     <template #default="scope">
-                        <strong>[[ scope.row.plugin_name ]]</strong>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <strong>[[ scope.row.plugin_name ]]</strong>
+                            <el-tag v-if="scope.row.is_force_update" type="danger" size="small">强制更新</el-tag>
+                        </div>
                     </template>
                 </el-table-column>
                 
-                <el-table-column label="版本" width="120">
+                <el-table-column label="版本信息" width="200">
                     <template #default="scope">
-                        <el-tag type="primary">v[[ scope.row.current_version ]]</el-tag>
+                        <div style="line-height: 1.6;">
+                            <div><el-tag type="primary" size="small">v[[ scope.row.current_version ]]</el-tag></div>
+                            <div v-if="scope.row.min_version" style="font-size: 12px; color: #999; margin-top: 4px;">
+                                最低: [[ scope.row.min_version ]]
+                            </div>
+                        </div>
                     </template>
                 </el-table-column>
                 
-                <el-table-column label="最低版本" width="100">
+                <el-table-column label="状态" width="80" align="center">
                     <template #default="scope">
-                        [[ scope.row.min_version || '-' ]]
-                    </template>
-                </el-table-column>
-                
-                <el-table-column label="文件大小" width="100">
-                    <template #default="scope">
-                        [[ scope.row.file_size || '-' ]]
-                    </template>
-                </el-table-column>
-                
-                <el-table-column label="状态" width="100">
-                    <template #default="scope">
-                        <el-tag :type="scope.row.is_active ? 'success' : 'info'">
+                        <el-tag :type="scope.row.is_active ? 'success' : 'info'" size="small">
                             [[ scope.row.is_active ? '启用' : '禁用' ]]
                         </el-tag>
-                        <el-tag v-if="scope.row.is_force_update" type="danger" size="small" style="margin-left: 5px;">
-                            强制
-                        </el-tag>
                     </template>
                 </el-table-column>
                 
-                <el-table-column label="发布时间" width="160">
+                <el-table-column label="发布时间" width="140">
                     <template #default="scope">
-                        [[ formatDate(scope.row.release_date) ]]
+                        <span style="font-size: 13px;">[[ formatDate(scope.row.release_date) ]]</span>
                     </template>
                 </el-table-column>
                 
-                <el-table-column label="操作" width="220" fixed="right">
+                <el-table-column label="操作" width="180" fixed="right" align="center">
                     <template #default="scope">
-                        <el-button 
-                            size="small" 
-                            @click="toggleStatus(scope.row)"
-                            :type="scope.row.is_active ? 'warning' : 'success'">
-                            [[ scope.row.is_active ? '禁用' : '启用' ]]
-                        </el-button>
-                        <el-button 
-                            size="small" 
-                            type="primary"
-                            @click="showEditDialog(scope.row)">
-                            编辑
-                        </el-button>
-                        <el-button 
-                            size="small" 
-                            type="danger"
-                            @click="deletePlugin(scope.row)">
-                            删除
-                        </el-button>
+                        <el-button-group>
+                            <el-button 
+                                size="small" 
+                                @click="toggleStatus(scope.row)"
+                                :type="scope.row.is_active ? 'warning' : 'success'">
+                                [[ scope.row.is_active ? '禁用' : '启用' ]]
+                            </el-button>
+                            <el-button 
+                                size="small" 
+                                type="primary"
+                                @click="showEditDialog(scope.row)">
+                                编辑
+                            </el-button>
+                            <el-button 
+                                size="small" 
+                                type="danger"
+                                @click="deletePlugin(scope.row)">
+                                删除
+                            </el-button>
+                        </el-button-group>
                     </template>
                 </el-table-column>
             </el-table>
@@ -93,59 +86,73 @@
     <el-dialog 
         :title="dialogMode === 'create' ? '添加插件' : '编辑插件'"
         v-model="dialogVisible"
-        width="700px">
-        <el-form :model="form" label-width="100px">
-            <el-row :gutter="20">
+        width="700px"
+        :close-on-click-modal="false">
+        <el-form :model="form" label-width="110px" label-position="left">
+            <!-- 基础信息 -->
+            <el-form-item label="插件名称" required>
+                <el-input 
+                    v-model="form.plugin_name"
+                    placeholder="如: windsurf-continue-pro"
+                    :disabled="dialogMode === 'edit'">
+                </el-input>
+            </el-form-item>
+            
+            <el-form-item label="显示名称">
+                <el-input v-model="form.display_name" placeholder="如: Windsurf Continue Pro"></el-input>
+            </el-form-item>
+            
+            <el-form-item label="插件描述">
+                <el-input 
+                    v-model="form.description"
+                    type="textarea"
+                    :rows="2"
+                    placeholder="插件的详细描述">
+                </el-input>
+            </el-form-item>
+            
+            <el-row :gutter="16">
                 <el-col :span="12">
-                    <el-form-item label="插件名称" required>
-                        <el-input 
-                            v-model="form.plugin_name"
-                            placeholder="如: windsurf-continue-pro"
-                            :disabled="dialogMode === 'edit'">
-                        </el-input>
+                    <el-form-item label="IDE 类型" required>
+                        <el-select v-model="form.ide_type" placeholder="选择 IDE 类型" style="width: 100%;">
+                            <el-option label="Windsurf" value="windsurf"></el-option>
+                            <el-option label="Kiro" value="kiro"></el-option>
+                        </el-select>
                     </el-form-item>
                 </el-col>
                 <el-col :span="12">
-                    <el-form-item label="当前版本" required>
-                        <el-input 
-                            v-model="form.current_version"
-                            placeholder="如: 1.0.0">
-                        </el-input>
+                    <el-form-item label="排序顺序">
+                        <el-input-number v-model="form.sort_order" :min="0" style="width: 100%;"></el-input-number>
                     </el-form-item>
                 </el-col>
             </el-row>
             
-            <el-row :gutter="20">
+            <!-- 版本管理 -->
+            <el-divider content-position="left">版本管理</el-divider>
+            
+            <el-row :gutter="16">
                 <el-col :span="12">
-                    <el-form-item label="最低版本">
-                        <el-input 
-                            v-model="form.min_version"
-                            placeholder="低于此版本强制更新">
-                        </el-input>
+                    <el-form-item label="当前版本" required>
+                        <el-input v-model="form.current_version" placeholder="1.0.0"></el-input>
                     </el-form-item>
                 </el-col>
                 <el-col :span="12">
-                    <el-form-item label="文件大小">
-                        <el-input 
-                            v-model="form.file_size"
-                            placeholder="如: 31.87 KB">
-                        </el-input>
+                    <el-form-item label="最低版本">
+                        <el-input v-model="form.min_version" placeholder="可选"></el-input>
                     </el-form-item>
                 </el-col>
             </el-row>
             
             <el-form-item label="下载地址" required>
-                <el-input 
-                    v-model="form.download_url"
-                    placeholder="插件文件的下载 URL">
-                </el-input>
+                <el-input v-model="form.download_url" placeholder="插件文件的下载 URL"></el-input>
+            </el-form-item>
+            
+            <el-form-item label="文件大小">
+                <el-input v-model="form.file_size" placeholder="如: 31.87 KB"></el-input>
             </el-form-item>
             
             <el-form-item label="更新标题">
-                <el-input 
-                    v-model="form.update_title"
-                    placeholder="更新弹窗的标题">
-                </el-input>
+                <el-input v-model="form.update_title" placeholder="可选"></el-input>
             </el-form-item>
             
             <el-form-item label="更新描述">
@@ -153,7 +160,7 @@
                     v-model="form.update_description"
                     type="textarea"
                     :rows="2"
-                    placeholder="更新弹窗显示的简短描述">
+                    placeholder="简短描述（可选）">
                 </el-input>
             </el-form-item>
             
@@ -161,34 +168,82 @@
                 <el-input 
                     v-model="form.changelog"
                     type="textarea"
-                    :rows="5"
-                    placeholder="详细的更新日志，支持 Markdown">
+                    :rows="4"
+                    placeholder="详细的更新日志（支持 Markdown）">
                 </el-input>
             </el-form-item>
             
-            <el-row :gutter="20">
-                <el-col :span="12">
-                    <el-form-item label="启用状态">
-                        <el-switch 
-                            v-model="form.is_active"
-                            active-text="启用"
-                            inactive-text="禁用">
-                        </el-switch>
+            <!-- 客户端展示配置 -->
+            <el-collapse style="margin-bottom: 20px;">
+                <el-collapse-item title="客户端展示配置" name="display">
+                    <el-form-item label="图标名称">
+                        <el-input v-model="form.icon" placeholder="Lucide 图标名称，如: shield-check"></el-input>
+                        <small style="color: #999;">参考: https://lucide.dev/icons/</small>
                     </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                    <el-form-item label="强制更新">
-                        <el-switch 
-                            v-model="form.is_force_update"
-                            active-text="是"
-                            inactive-text="否">
-                        </el-switch>
-                        <div style="color: #999; font-size: 12px;">
-                            开启后所有低版本用户必须更新
-                        </div>
+                    
+                    <el-form-item label="图标渐变色">
+                        <el-input 
+                            v-model="form.icon_gradient"
+                            placeholder='JSON 数组，如: ["#667eea", "#764ba2"]'>
+                        </el-input>
                     </el-form-item>
-                </el-col>
-            </el-row>
+                    
+                    <el-form-item label="功能特性">
+                        <el-input 
+                            v-model="form.features"
+                            type="textarea"
+                            :rows="6"
+                            placeholder='JSON 数组，如: [{"title": "功能1", "description": "描述1"}]'>
+                        </el-input>
+                    </el-form-item>
+                    
+                    <el-form-item label="使用步骤">
+                        <el-input 
+                            v-model="form.usage_steps"
+                            type="textarea"
+                            :rows="6"
+                            placeholder='JSON 数组，如: [{"step": 1, "title": "步骤1", "description": "描述1"}]'>
+                        </el-input>
+                    </el-form-item>
+                    
+                    <el-form-item label="提示信息">
+                        <el-input 
+                            v-model="form.tips"
+                            type="textarea"
+                            :rows="6"
+                            placeholder='JSON 数组，如: [{"type": "success", "title": "提示", "content": "内容"}]'>
+                        </el-input>
+                    </el-form-item>
+                </el-collapse-item>
+                
+                <el-collapse-item title="技术配置" name="technical">
+                    <el-form-item label="MCP 配置路径">
+                        <el-input v-model="form.mcp_config_path" placeholder="如: ~/.codeium/windsurf/mcp_config.json"></el-input>
+                    </el-form-item>
+                    
+                    <el-form-item label="扩展安装路径">
+                        <el-input v-model="form.extensions_path" placeholder="如: ~/.windsurf/extensions"></el-input>
+                    </el-form-item>
+                    
+                    <el-form-item label="MCP 额外配置">
+                        <el-input 
+                            v-model="form.mcp_extra_config"
+                            type="textarea"
+                            :rows="3"
+                            placeholder='JSON 对象，如: {"autoApprove": ["ask_continue"]}'>
+                        </el-input>
+                    </el-form-item>
+                </el-collapse-item>
+            </el-collapse>
+            
+            <!-- 状态设置 -->
+            <el-form-item label="状态设置">
+                <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                    <el-switch v-model="form.is_active" active-text="启用" inactive-text="禁用"></el-switch>
+                    <el-switch v-model="form.is_force_update" active-text="强制更新" inactive-text="普通更新"></el-switch>
+                    <el-switch v-model="form.is_primary" active-text="主要插件" inactive-text="普通插件"></el-switch>
+                </div>
+            </el-form-item>
         </el-form>
         
         <template #footer>
@@ -205,23 +260,33 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
 }
 
 .page-header h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: 22px;
+    font-weight: 600;
     color: #333;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .box-card {
-    margin-top: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
 .empty-state {
     text-align: center;
-    padding: 60px 0;
+    padding: 80px 20px;
     color: #999;
+}
+
+.empty-state p {
+    margin-top: 16px;
+    font-size: 14px;
 }
 </style>
 {% endblock %}
@@ -243,6 +308,9 @@ createApp({
             form: {
                 id: null,
                 plugin_name: '',
+                display_name: '',
+                description: '',
+                ide_type: 'windsurf',
                 current_version: '',
                 min_version: '',
                 download_url: '',
@@ -251,7 +319,17 @@ createApp({
                 update_description: '',
                 is_force_update: false,
                 is_active: true,
-                file_size: ''
+                is_primary: false,
+                file_size: '',
+                icon: 'shield-check',
+                icon_gradient: '',
+                features: '',
+                usage_steps: '',
+                tips: '',
+                mcp_config_path: '',
+                extensions_path: '',
+                mcp_extra_config: '',
+                sort_order: 0
             }
         };
     },
@@ -279,6 +357,9 @@ createApp({
             this.form = {
                 id: null,
                 plugin_name: 'windsurf-continue-pro',
+                display_name: 'Windsurf Continue Pro',
+                description: '专属定制版 - 与卡密系统完全打通',
+                ide_type: 'windsurf',
                 current_version: '1.0.0',
                 min_version: '',
                 download_url: '',
@@ -287,16 +368,35 @@ createApp({
                 update_description: '发现新版本，建议更新以获得更好的体验。',
                 is_force_update: false,
                 is_active: true,
-                file_size: ''
+                is_primary: false,
+                file_size: '',
+                icon: 'shield-check',
+                icon_gradient: '["#667eea", "#764ba2"]',
+                features: '',
+                usage_steps: '',
+                tips: '',
+                mcp_config_path: '',
+                extensions_path: '',
+                mcp_extra_config: '',
+                sort_order: 0
             };
             this.dialogVisible = true;
         },
         
         showEditDialog(row) {
             this.dialogMode = 'edit';
+            // 处理JSON字段的序列化
+            const jsonToString = (val) => {
+                if (!val) return '';
+                return typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+            };
+            
             this.form = {
                 id: row.id,
                 plugin_name: row.plugin_name,
+                display_name: row.display_name || '',
+                description: row.description || '',
+                ide_type: row.ide_type || 'windsurf',
                 current_version: row.current_version,
                 min_version: row.min_version || '',
                 download_url: row.download_url,
@@ -305,7 +405,17 @@ createApp({
                 update_description: row.update_description || '',
                 is_force_update: row.is_force_update,
                 is_active: row.is_active,
-                file_size: row.file_size || ''
+                is_primary: row.is_primary || false,
+                file_size: row.file_size || '',
+                icon: row.icon || 'shield-check',
+                icon_gradient: jsonToString(row.icon_gradient),
+                features: jsonToString(row.features),
+                usage_steps: jsonToString(row.usage_steps),
+                tips: jsonToString(row.tips),
+                mcp_config_path: row.mcp_config_path || '',
+                extensions_path: row.extensions_path || '',
+                mcp_extra_config: jsonToString(row.mcp_extra_config),
+                sort_order: row.sort_order || 0
             };
             this.dialogVisible = true;
         },
@@ -324,19 +434,54 @@ createApp({
                 return;
             }
             
+            // 验证JSON字段格式
+            const validateJson = (fieldName, value) => {
+                if (!value || !value.trim()) return true;
+                try {
+                    JSON.parse(value);
+                    return true;
+                } catch (e) {
+                    ElMessage.warning(`${fieldName} 格式不正确，请输入有效的JSON`);
+                    return false;
+                }
+            };
+            
+            if (!validateJson('图标渐变色', this.form.icon_gradient)) return;
+            if (!validateJson('功能特性', this.form.features)) return;
+            if (!validateJson('使用步骤', this.form.usage_steps)) return;
+            if (!validateJson('提示信息', this.form.tips)) return;
+            if (!validateJson('MCP额外配置', this.form.mcp_extra_config)) return;
+            
             this.submitting = true;
             try {
                 const formData = new FormData();
                 formData.append('plugin_name', this.form.plugin_name);
                 formData.append('current_version', this.form.current_version);
                 formData.append('download_url', this.form.download_url);
+                
+                // 基础字段
+                if (this.form.display_name) formData.append('display_name', this.form.display_name);
+                if (this.form.description) formData.append('description', this.form.description);
+                formData.append('ide_type', this.form.ide_type);
                 if (this.form.min_version) formData.append('min_version', this.form.min_version);
                 if (this.form.changelog) formData.append('changelog', this.form.changelog);
                 if (this.form.update_title) formData.append('update_title', this.form.update_title);
                 if (this.form.update_description) formData.append('update_description', this.form.update_description);
                 formData.append('is_force_update', this.form.is_force_update);
                 formData.append('is_active', this.form.is_active);
+                formData.append('is_primary', this.form.is_primary);
                 if (this.form.file_size) formData.append('file_size', this.form.file_size);
+                formData.append('sort_order', this.form.sort_order);
+                
+                // 客户端展示字段
+                if (this.form.icon) formData.append('icon', this.form.icon);
+                if (this.form.icon_gradient) formData.append('icon_gradient', this.form.icon_gradient);
+                if (this.form.features) formData.append('features', this.form.features);
+                if (this.form.usage_steps) formData.append('usage_steps', this.form.usage_steps);
+                if (this.form.tips) formData.append('tips', this.form.tips);
+                if (this.form.mcp_config_path) formData.append('mcp_config_path', this.form.mcp_config_path);
+                if (this.form.extensions_path) formData.append('extensions_path', this.form.extensions_path);
+                if (this.form.mcp_extra_config) formData.append('mcp_extra_config', this.form.mcp_extra_config);
                 
                 let response;
                 if (this.dialogMode === 'create') {
@@ -395,9 +540,7 @@ createApp({
         
         formatDate(dateStr) {
             if (!dateStr) return '-';
-            const date = new Date(dateStr);
-            return date.toLocaleString('zh-CN', {
-                year: 'numeric',
+            return new Date(dateStr).toLocaleString('zh-CN', {
                 month: '2-digit',
                 day: '2-digit',
                 hour: '2-digit',

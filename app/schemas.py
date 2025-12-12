@@ -209,13 +209,17 @@ class PluginListItem(BaseModel):
     ide_type: str = "windsurf"  # IDE 类型: windsurf, kiro
     latest_version: str  # 最新版本
     download_url: Optional[str] = None  # 下载地址
-    icon: str = "puzzle"  # 图标名称 (lucide icon)
-    icon_gradient: list[str] = ["#667eea", "#764ba2"]  # 图标渐变色
-    features: list[dict] = []  # 功能列表 [{"title": "xxx", "description": "xxx"}]
-    usage_steps: list[dict] = []  # 使用步骤 [{"step": 1, "title": "xxx", "description": "xxx"}]
-    tips: list[dict] = []  # 提示信息 [{"type": "success|warning", "title": "xxx", "content": "xxx"}]
-    is_disabled: bool = False  # 是否禁用
     is_primary: bool = False  # 是否主插件
+    # 客户端展示字段
+    icon: Optional[str] = "shield-check"  # 图标名称
+    icon_gradient: Optional[list] = None  # 图标渐变色
+    features: Optional[list] = None  # 功能特性列表
+    usage_steps: Optional[list] = None  # 使用步骤
+    tips: Optional[list] = None  # 提示信息
+    mcp_config_path: Optional[str] = None  # MCP配置路径
+    extensions_path: Optional[str] = None  # 扩展路径
+    mcp_extra_config: Optional[dict] = None  # MCP额外配置
+    sort_order: int = 0  # 排序顺序
 
 class PluginListResponse(BaseModel):
     """插件列表响应（客户端用）"""
