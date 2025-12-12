@@ -7,10 +7,12 @@ from typing import List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
 from app.schemas import (
     AccountResponse, KeyCreate, KeyResponse, StatsResponse,
-    AnnouncementCreate, AnnouncementUpdate, AnnouncementListItem
+    AnnouncementCreate, AnnouncementUpdate, AnnouncementListItem,
+    VersionNoteCreate, VersionNoteUpdate, VersionNoteItem,
+    PluginInfoCreate, PluginInfoUpdate, PluginInfoListItem
 )
 from app.auth import verify_admin, create_session, check_credentials
 from app.utils import (
@@ -993,3 +995,360 @@ async def toggle_announcement(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"切换公告状态失败: {str(e)}")
+
+# ==================== 版本说明管理 ====================
+
+@router.get("/version-notes", response_class=HTMLResponse)
+async def version_notes_page(
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """版本说明管理页面"""
+    notes = db.query(VersionNote).order_by(VersionNote.release_date.desc()).all()
+    return templates.TemplateResponse("version_notes.html", {
+        "request": request,
+        "username": username,
+        "notes": notes
+    })
+
+@router.get("/api/version-notes")
+async def get_version_notes_api(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取版本说明列表 API"""
+    notes = db.query(VersionNote).order_by(VersionNote.release_date.desc()).all()
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": note.id,
+                "version": note.version,
+                "title": note.title,
+                "content": note.content,
+                "release_date": note.release_date.isoformat() if note.release_date else None,
+                "is_published": note.is_published,
+                "created_at": note.created_at.isoformat() if note.created_at else None,
+                "updated_at": note.updated_at.isoformat() if note.updated_at else None
+            }
+            for note in notes
+        ]
+    }
+
+@router.post("/api/version-notes")
+async def create_version_note(
+    version: str = Form(...),
+    title: str = Form(...),
+    content: str = Form(...),
+    release_date: str = Form(None),
+    is_published: bool = Form(True),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """创建版本说明"""
+    try:
+        # 解析发布日期
+        parsed_date = None
+        if release_date:
+            try:
+                parsed_date = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+            except:
+                parsed_date = datetime.utcnow()
+        else:
+            parsed_date = datetime.utcnow()
+        
+        note = VersionNote(
+            version=version,
+            title=title,
+            content=content,
+            release_date=parsed_date,
+            is_published=is_published
+        )
+        db.add(note)
+        db.commit()
+        db.refresh(note)
+        
+        return {"success": True, "message": "版本说明创建成功", "id": note.id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建版本说明失败: {str(e)}")
+
+@router.put("/api/version-notes/{note_id}")
+async def update_version_note(
+    note_id: int,
+    version: str = Form(None),
+    title: str = Form(None),
+    content: str = Form(None),
+    release_date: str = Form(None),
+    is_published: bool = Form(None),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新版本说明"""
+    try:
+        note = db.query(VersionNote).filter(VersionNote.id == note_id).first()
+        if not note:
+            raise HTTPException(status_code=404, detail="版本说明不存在")
+        
+        if version is not None:
+            note.version = version
+        if title is not None:
+            note.title = title
+        if content is not None:
+            note.content = content
+        if release_date:
+            try:
+                note.release_date = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+            except:
+                pass
+        if is_published is not None:
+            note.is_published = is_published
+        
+        note.updated_at = datetime.utcnow()
+        db.commit()
+        
+        return {"success": True, "message": "版本说明更新成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新版本说明失败: {str(e)}")
+
+@router.delete("/api/version-notes/{note_id}")
+async def delete_version_note(
+    note_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除版本说明"""
+    try:
+        note = db.query(VersionNote).filter(VersionNote.id == note_id).first()
+        if not note:
+            raise HTTPException(status_code=404, detail="版本说明不存在")
+        
+        db.delete(note)
+        db.commit()
+        
+        return {"success": True, "message": "版本说明删除成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"删除版本说明失败: {str(e)}")
+
+@router.post("/api/version-notes/{note_id}/toggle")
+async def toggle_version_note(
+    note_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """切换版本说明发布状态"""
+    try:
+        note = db.query(VersionNote).filter(VersionNote.id == note_id).first()
+        if not note:
+            raise HTTPException(status_code=404, detail="版本说明不存在")
+        
+        note.is_published = not note.is_published
+        note.updated_at = datetime.utcnow()
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"版本说明已{'发布' if note.is_published else '取消发布'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"切换发布状态失败: {str(e)}")
+
+
+# ==================== 插件管理 ====================
+
+@router.get("/plugins", response_class=HTMLResponse)
+async def plugins_page(request: Request, username: str = Depends(verify_admin)):
+    """插件管理页面"""
+    return templates.TemplateResponse("plugins.html", {"request": request})
+
+@router.get("/api/plugins")
+async def get_plugins(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取所有插件列表"""
+    try:
+        plugins = db.query(PluginInfo).order_by(PluginInfo.updated_at.desc()).all()
+        return {
+            "success": True,
+            "plugins": [
+                {
+                    "id": p.id,
+                    "plugin_name": p.plugin_name,
+                    "current_version": p.current_version,
+                    "min_version": p.min_version,
+                    "download_url": p.download_url,
+                    "changelog": p.changelog,
+                    "update_title": p.update_title,
+                    "update_description": p.update_description,
+                    "is_force_update": p.is_force_update,
+                    "is_active": p.is_active,
+                    "file_size": p.file_size,
+                    "release_date": p.release_date.isoformat() if p.release_date else None,
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None
+                }
+                for p in plugins
+            ],
+            "total": len(plugins)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取插件列表失败: {str(e)}")
+
+@router.post("/api/plugins")
+async def create_plugin(
+    plugin_name: str = Form(...),
+    current_version: str = Form(...),
+    download_url: str = Form(...),
+    min_version: str = Form(None),
+    changelog: str = Form(None),
+    update_title: str = Form(None),
+    update_description: str = Form(None),
+    is_force_update: bool = Form(False),
+    is_active: bool = Form(True),
+    file_size: str = Form(None),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """创建新插件"""
+    try:
+        # 检查是否已存在同名插件
+        existing = db.query(PluginInfo).filter(PluginInfo.plugin_name == plugin_name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"插件 {plugin_name} 已存在")
+        
+        plugin = PluginInfo(
+            plugin_name=plugin_name,
+            current_version=current_version,
+            min_version=min_version,
+            download_url=download_url,
+            changelog=changelog,
+            update_title=update_title,
+            update_description=update_description,
+            is_force_update=is_force_update,
+            is_active=is_active,
+            file_size=file_size,
+            release_date=datetime.utcnow()
+        )
+        
+        db.add(plugin)
+        db.commit()
+        
+        return {"success": True, "message": "插件创建成功", "id": plugin.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建插件失败: {str(e)}")
+
+@router.put("/api/plugins/{plugin_id}")
+async def update_plugin(
+    plugin_id: int,
+    plugin_name: str = Form(None),
+    current_version: str = Form(None),
+    download_url: str = Form(None),
+    min_version: str = Form(None),
+    changelog: str = Form(None),
+    update_title: str = Form(None),
+    update_description: str = Form(None),
+    is_force_update: bool = Form(None),
+    is_active: bool = Form(None),
+    file_size: str = Form(None),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新插件信息"""
+    try:
+        plugin = db.query(PluginInfo).filter(PluginInfo.id == plugin_id).first()
+        if not plugin:
+            raise HTTPException(status_code=404, detail="插件不存在")
+        
+        if plugin_name is not None:
+            plugin.plugin_name = plugin_name
+        if current_version is not None:
+            plugin.current_version = current_version
+            plugin.release_date = datetime.utcnow()  # 更新版本时更新发布日期
+        if download_url is not None:
+            plugin.download_url = download_url
+        if min_version is not None:
+            plugin.min_version = min_version
+        if changelog is not None:
+            plugin.changelog = changelog
+        if update_title is not None:
+            plugin.update_title = update_title
+        if update_description is not None:
+            plugin.update_description = update_description
+        if is_force_update is not None:
+            plugin.is_force_update = is_force_update
+        if is_active is not None:
+            plugin.is_active = is_active
+        if file_size is not None:
+            plugin.file_size = file_size
+        
+        plugin.updated_at = datetime.utcnow()
+        db.commit()
+        
+        return {"success": True, "message": "插件更新成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新插件失败: {str(e)}")
+
+@router.delete("/api/plugins/{plugin_id}")
+async def delete_plugin(
+    plugin_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除插件"""
+    try:
+        plugin = db.query(PluginInfo).filter(PluginInfo.id == plugin_id).first()
+        if not plugin:
+            raise HTTPException(status_code=404, detail="插件不存在")
+        
+        db.delete(plugin)
+        db.commit()
+        
+        return {"success": True, "message": "插件删除成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"删除插件失败: {str(e)}")
+
+@router.post("/api/plugins/{plugin_id}/toggle")
+async def toggle_plugin(
+    plugin_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """切换插件启用状态"""
+    try:
+        plugin = db.query(PluginInfo).filter(PluginInfo.id == plugin_id).first()
+        if not plugin:
+            raise HTTPException(status_code=404, detail="插件不存在")
+        
+        plugin.is_active = not plugin.is_active
+        plugin.updated_at = datetime.utcnow()
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"插件已{'启用' if plugin.is_active else '禁用'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"切换插件状态失败: {str(e)}")

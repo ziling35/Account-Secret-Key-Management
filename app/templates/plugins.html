@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+
+{% block title %}插件管理 - Windsurf账号池管理系统{% endblock %}
+
+{% block content %}
+<div id="app">
+    <div class="page-header">
+        <h1><i class="bi bi-puzzle"></i> 插件管理</h1>
+        <el-button type="primary" @click="showCreateDialog" icon="Plus">
+            添加插件
+        </el-button>
+    </div>
+
+    <!-- 插件列表 -->
+    <el-card class="box-card" v-loading="loading">
+        <div v-if="plugins.length === 0" class="empty-state">
+            <i class="bi bi-inbox" style="font-size: 48px; color: #ccc;"></i>
+            <p>暂无插件</p>
+        </div>
+        
+        <div v-else>
+            <el-table :data="plugins" style="width: 100%">
+                <el-table-column prop="id" label="ID" width="60"></el-table-column>
+                
+                <el-table-column label="插件名称" width="200">
+                    <template #default="scope">
+                        <strong>[[ scope.row.plugin_name ]]</strong>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="版本" width="120">
+                    <template #default="scope">
+                        <el-tag type="primary">v[[ scope.row.current_version ]]</el-tag>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="最低版本" width="100">
+                    <template #default="scope">
+                        [[ scope.row.min_version || '-' ]]
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="文件大小" width="100">
+                    <template #default="scope">
+                        [[ scope.row.file_size || '-' ]]
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="状态" width="100">
+                    <template #default="scope">
+                        <el-tag :type="scope.row.is_active ? 'success' : 'info'">
+                            [[ scope.row.is_active ? '启用' : '禁用' ]]
+                        </el-tag>
+                        <el-tag v-if="scope.row.is_force_update" type="danger" size="small" style="margin-left: 5px;">
+                            强制
+                        </el-tag>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="发布时间" width="160">
+                    <template #default="scope">
+                        [[ formatDate(scope.row.release_date) ]]
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="操作" width="220" fixed="right">
+                    <template #default="scope">
+                        <el-button 
+                            size="small" 
+                            @click="toggleStatus(scope.row)"
+                            :type="scope.row.is_active ? 'warning' : 'success'">
+                            [[ scope.row.is_active ? '禁用' : '启用' ]]
+                        </el-button>
+                        <el-button 
+                            size="small" 
+                            type="primary"
+                            @click="showEditDialog(scope.row)">
+                            编辑
+                        </el-button>
+                        <el-button 
+                            size="small" 
+                            type="danger"
+                            @click="deletePlugin(scope.row)">
+                            删除
+                        </el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </el-card>
+
+    <!-- 创建/编辑对话框 -->
+    <el-dialog 
+        :title="dialogMode === 'create' ? '添加插件' : '编辑插件'"
+        v-model="dialogVisible"
+        width="700px">
+        <el-form :model="form" label-width="100px">
+            <el-row :gutter="20">
+                <el-col :span="12">
+                    <el-form-item label="插件名称" required>
+                        <el-input 
+                            v-model="form.plugin_name"
+                            placeholder="如: windsurf-continue-pro"
+                            :disabled="dialogMode === 'edit'">
+                        </el-input>
+                    </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                    <el-form-item label="当前版本" required>
+                        <el-input 
+                            v-model="form.current_version"
+                            placeholder="如: 1.0.0">
+                        </el-input>
+                    </el-form-item>
+                </el-col>
+            </el-row>
+            
+            <el-row :gutter="20">
+                <el-col :span="12">
+                    <el-form-item label="最低版本">
+                        <el-input 
+                            v-model="form.min_version"
+                            placeholder="低于此版本强制更新">
+                        </el-input>
+                    </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                    <el-form-item label="文件大小">
+                        <el-input 
+                            v-model="form.file_size"
+                            placeholder="如: 31.87 KB">
+                        </el-input>
+                    </el-form-item>
+                </el-col>
+            </el-row>
+            
+            <el-form-item label="下载地址" required>
+                <el-input 
+                    v-model="form.download_url"
+                    placeholder="插件文件的下载 URL">
+                </el-input>
+            </el-form-item>
+            
+            <el-form-item label="更新标题">
+                <el-input 
+                    v-model="form.update_title"
+                    placeholder="更新弹窗的标题">
+                </el-input>
+            </el-form-item>
+            
+            <el-form-item label="更新描述">
+                <el-input 
+                    v-model="form.update_description"
+                    type="textarea"
+                    :rows="2"
+                    placeholder="更新弹窗显示的简短描述">
+                </el-input>
+            </el-form-item>
+            
+            <el-form-item label="更新日志">
+                <el-input 
+                    v-model="form.changelog"
+                    type="textarea"
+                    :rows="5"
+                    placeholder="详细的更新日志，支持 Markdown">
+                </el-input>
+            </el-form-item>
+            
+            <el-row :gutter="20">
+                <el-col :span="12">
+                    <el-form-item label="启用状态">
+                        <el-switch 
+                            v-model="form.is_active"
+                            active-text="启用"
+                            inactive-text="禁用">
+                        </el-switch>
+                    </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                    <el-form-item label="强制更新">
+                        <el-switch 
+                            v-model="form.is_force_update"
+                            active-text="是"
+                            inactive-text="否">
+                        </el-switch>
+                        <div style="color: #999; font-size: 12px;">
+                            开启后所有低版本用户必须更新
+                        </div>
+                    </el-form-item>
+                </el-col>
+            </el-row>
+        </el-form>
+        
+        <template #footer>
+            <el-button @click="dialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitForm" :loading="submitting">
+                [[ dialogMode === 'create' ? '创建' : '保存' ]]
+            </el-button>
+        </template>
+    </el-dialog>
+</div>
+
+<style>
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.page-header h1 {
+    margin: 0;
+    font-size: 24px;
+    color: #333;
+}
+
+.box-card {
+    margin-top: 20px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 0;
+    color: #999;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+createApp({
+    delimiters: ['[[', ']]'],
+    data() {
+        return {
+            loading: false,
+            submitting: false,
+            plugins: [],
+            dialogVisible: false,
+            dialogMode: 'create',
+            form: {
+                id: null,
+                plugin_name: '',
+                current_version: '',
+                min_version: '',
+                download_url: '',
+                changelog: '',
+                update_title: '',
+                update_description: '',
+                is_force_update: false,
+                is_active: true,
+                file_size: ''
+            }
+        };
+    },
+    mounted() {
+        this.loadPlugins();
+    },
+    methods: {
+        async loadPlugins() {
+            this.loading = true;
+            try {
+                const response = await axios.get('/admin/api/plugins');
+                if (response.data.success) {
+                    this.plugins = response.data.plugins;
+                }
+            } catch (error) {
+                ElMessage.error('加载插件列表失败');
+                console.error(error);
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        showCreateDialog() {
+            this.dialogMode = 'create';
+            this.form = {
+                id: null,
+                plugin_name: 'windsurf-continue-pro',
+                current_version: '1.0.0',
+                min_version: '',
+                download_url: '',
+                changelog: '',
+                update_title: 'Windsurf Continue Pro 更新',
+                update_description: '发现新版本，建议更新以获得更好的体验。',
+                is_force_update: false,
+                is_active: true,
+                file_size: ''
+            };
+            this.dialogVisible = true;
+        },
+        
+        showEditDialog(row) {
+            this.dialogMode = 'edit';
+            this.form = {
+                id: row.id,
+                plugin_name: row.plugin_name,
+                current_version: row.current_version,
+                min_version: row.min_version || '',
+                download_url: row.download_url,
+                changelog: row.changelog || '',
+                update_title: row.update_title || '',
+                update_description: row.update_description || '',
+                is_force_update: row.is_force_update,
+                is_active: row.is_active,
+                file_size: row.file_size || ''
+            };
+            this.dialogVisible = true;
+        },
+        
+        async submitForm() {
+            if (!this.form.plugin_name.trim()) {
+                ElMessage.warning('请输入插件名称');
+                return;
+            }
+            if (!this.form.current_version.trim()) {
+                ElMessage.warning('请输入当前版本');
+                return;
+            }
+            if (!this.form.download_url.trim()) {
+                ElMessage.warning('请输入下载地址');
+                return;
+            }
+            
+            this.submitting = true;
+            try {
+                const formData = new FormData();
+                formData.append('plugin_name', this.form.plugin_name);
+                formData.append('current_version', this.form.current_version);
+                formData.append('download_url', this.form.download_url);
+                if (this.form.min_version) formData.append('min_version', this.form.min_version);
+                if (this.form.changelog) formData.append('changelog', this.form.changelog);
+                if (this.form.update_title) formData.append('update_title', this.form.update_title);
+                if (this.form.update_description) formData.append('update_description', this.form.update_description);
+                formData.append('is_force_update', this.form.is_force_update);
+                formData.append('is_active', this.form.is_active);
+                if (this.form.file_size) formData.append('file_size', this.form.file_size);
+                
+                let response;
+                if (this.dialogMode === 'create') {
+                    response = await axios.post('/admin/api/plugins', formData);
+                } else {
+                    response = await axios.put(`/admin/api/plugins/${this.form.id}`, formData);
+                }
+                
+                if (response.data.success) {
+                    ElMessage.success(response.data.message);
+                    this.dialogVisible = false;
+                    this.loadPlugins();
+                }
+            } catch (error) {
+                ElMessage.error(error.response?.data?.detail || '操作失败');
+            } finally {
+                this.submitting = false;
+            }
+        },
+        
+        async toggleStatus(row) {
+            try {
+                const response = await axios.post(`/admin/api/plugins/${row.id}/toggle`);
+                if (response.data.success) {
+                    ElMessage.success(response.data.message);
+                    this.loadPlugins();
+                }
+            } catch (error) {
+                ElMessage.error('切换状态失败');
+            }
+        },
+        
+        async deletePlugin(row) {
+            try {
+                await ElMessageBox.confirm(
+                    `确定要删除插件 "${row.plugin_name}" 吗？`,
+                    '确认删除',
+                    {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }
+                );
+                
+                const response = await axios.delete(`/admin/api/plugins/${row.id}`);
+                if (response.data.success) {
+                    ElMessage.success('删除成功');
+                    this.loadPlugins();
+                }
+            } catch (error) {
+                if (error !== 'cancel') {
+                    ElMessage.error('删除失败');
+                }
+            }
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    }
+}).use(ElementPlus).mount('#app');
+</script>
+{% endblock %}

@@ -71,3 +71,36 @@ class Announcement(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     created_by = Column(String, nullable=True)  # 创建人
     updated_by = Column(String, nullable=True)  # 更新人
+
+class VersionNote(Base):
+    """版本说明"""
+    __tablename__ = "version_notes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    version = Column(String, nullable=False, index=True)  # 版本号，如 1.0.0
+    title = Column(String, nullable=False)  # 版本标题
+    content = Column(String, nullable=False)  # 版本说明内容（支持 Markdown）
+    release_date = Column(DateTime, default=datetime.utcnow, nullable=False)  # 发布日期
+    is_published = Column(Boolean, default=True, nullable=False, index=True)  # 是否发布
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PluginInfo(Base):
+    """插件信息管理"""
+    __tablename__ = "plugin_info"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    plugin_name = Column(String, nullable=False, index=True)  # 插件名称，如 windsurf-continue-pro
+    current_version = Column(String, nullable=False)  # 当前版本号，如 1.0.0
+    min_version = Column(String, nullable=True)  # 最低支持版本（低于此版本强制更新）
+    download_url = Column(String, nullable=False)  # 插件下载地址
+    changelog = Column(String, nullable=True)  # 更新日志（支持 Markdown）
+    update_title = Column(String, nullable=True)  # 更新标题
+    update_description = Column(String, nullable=True)  # 更新描述（弹窗显示）
+    is_force_update = Column(Boolean, default=False, nullable=False)  # 是否强制更新
+    is_active = Column(Boolean, default=True, nullable=False, index=True)  # 是否启用
+    file_size = Column(String, nullable=True)  # 文件大小，如 "31.87 KB"
+    release_date = Column(DateTime, default=datetime.utcnow, nullable=False)  # 发布日期
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

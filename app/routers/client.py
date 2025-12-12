@@ -5,8 +5,8 @@ import math
 import os
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement
-from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse
+from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
+from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse, AccountHistoryResponse, AccountHistoryItem, VersionNotesResponse, VersionNoteItem, PluginInfoResponse, PluginVersionCheckResponse, PluginListResponse, PluginListItem
 from app.auth import get_api_key
 from app.utils import calculate_remaining_time
 from app.windsurf_login import windsurf_login
@@ -405,3 +405,260 @@ async def login_with_account(
             message=f"处理请求失败: {str(e)}",
             data=None
         )
+
+@router.get("/account/history", response_model=AccountHistoryResponse)
+async def get_account_history(
+    api_key: str = Depends(get_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    获取该密钥关联的所有账号历史
+    - 需要在请求头中提供 X-API-Key
+    - 返回该密钥曾经获取过的所有账号（包含密码）
+    """
+    # 验证密钥
+    key = db.query(Key).filter(Key.key_code == api_key).first()
+    if not key:
+        raise HTTPException(status_code=401, detail="无效的API密钥")
+    
+    # 检查是否被禁用
+    if key.is_disabled:
+        raise HTTPException(status_code=403, detail="密钥已被管理员禁用")
+    
+    try:
+        # 查询该密钥关联的所有账号
+        accounts = db.query(Account).filter(
+            Account.assigned_to_key == api_key
+        ).order_by(Account.assigned_at.desc()).all()
+        
+        # 转换为响应格式
+        account_list = [
+            AccountHistoryItem(
+                email=acc.email,
+                password=acc.password,
+                api_key=acc.api_key,
+                name=acc.name,
+                assigned_at=acc.assigned_at
+            )
+            for acc in accounts
+        ]
+        
+        return AccountHistoryResponse(
+            success=True,
+            message=f"获取成功，共 {len(account_list)} 个账号",
+            accounts=account_list,
+            total=len(account_list)
+        )
+    except Exception as e:
+        return AccountHistoryResponse(
+            success=False,
+            message=f"获取账号历史失败: {str(e)}",
+            accounts=[],
+            total=0
+        )
+
+@router.get("/version-notes", response_model=VersionNotesResponse)
+async def get_version_notes(db: Session = Depends(get_db)):
+    """
+    获取已发布的版本说明列表
+    - 公开接口，无需认证
+    - 按版本号降序排列
+    """
+    try:
+        notes = db.query(VersionNote).filter(
+            VersionNote.is_published == True
+        ).order_by(VersionNote.release_date.desc()).all()
+        
+        note_list = [
+            VersionNoteItem(
+                id=note.id,
+                version=note.version,
+                title=note.title,
+                content=note.content,
+                release_date=note.release_date,
+                is_published=note.is_published,
+                created_at=note.created_at,
+                updated_at=note.updated_at
+            )
+            for note in notes
+        ]
+        
+        return VersionNotesResponse(
+            success=True,
+            message=f"获取成功，共 {len(note_list)} 条版本说明",
+            notes=note_list,
+            total=len(note_list)
+        )
+    except Exception as e:
+        return VersionNotesResponse(
+            success=False,
+            message=f"获取版本说明失败: {str(e)}",
+            notes=[],
+            total=0
+        )
+
+
+@router.get("/plugin/list", response_model=PluginListResponse)
+async def get_plugin_list(
+    db: Session = Depends(get_db)
+):
+    """
+    获取插件列表
+    - 公开接口，无需认证
+    - 返回所有可用插件的信息，供客户端动态渲染插件菜单
+    - 禁用的插件也会返回，由客户端决定是否显示
+    """
+    try:
+        plugins = db.query(PluginInfo).filter(
+            PluginInfo.is_active == True
+        ).order_by(PluginInfo.id).all()
+        
+        plugin_items = []
+        for plugin in plugins:
+            # 根据插件名称判断 IDE 类型和设置默认值
+            ide_type = "windsurf"
+            icon = "shield-check"
+            icon_gradient = ["#667eea", "#764ba2"]
+            display_name = plugin.plugin_name
+            description = plugin.update_description or ""
+            is_primary = True
+            
+            if "kiro" in plugin.plugin_name.lower():
+                ide_type = "kiro"
+                icon = "sparkles"
+                icon_gradient = ["#8b5cf6", "#6366f1"]
+                is_primary = False
+            
+            # 格式化显示名称
+            if plugin.plugin_name == "windsurf-continue-pro":
+                display_name = "Windsurf Continue Pro"
+                description = "专属定制版 - 与卡密系统完全打通"
+            elif plugin.plugin_name == "kiro-continue-pro":
+                display_name = "Kiro Continue Pro"
+                description = "Kiro IDE 专属版本 - 支持自动批准"
+            
+            # 构建功能列表
+            features = [
+                {"title": "与卡密完全打通", "description": "自动使用当前激活的卡密"},
+                {"title": "安全验证", "description": "定期检查卡密有效性，到期自动停止"},
+                {"title": "AI 持续对话", "description": "在同一对话中继续，不消耗新 credits"},
+                {"title": "专业界面", "description": "Windows 原生 GUI 对话框"}
+            ]
+            
+            # 构建使用步骤
+            usage_steps = [
+                {"step": 1, "title": "一键安装", "description": "点击「一键安装」按钮，自动完成安装、激活、配置 MCP、安装规则并重启"},
+                {"step": 2, "title": "开始使用", "description": "在 IDE 中正常使用 AI，结束时会自动弹出对话框"}
+            ]
+            
+            # 构建提示信息
+            tips = [
+                {"type": "success", "title": "激活码自动同步", "content": "客户端和插件共享激活码，一次激活全部搞定！"},
+                {"type": "warning", "title": "工作原理", "content": "插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续。"}
+            ]
+            
+            plugin_items.append(PluginListItem(
+                name=plugin.plugin_name,
+                display_name=display_name,
+                description=description,
+                ide_type=ide_type,
+                latest_version=plugin.current_version,
+                download_url=plugin.download_url,
+                icon=icon,
+                icon_gradient=icon_gradient,
+                features=features,
+                usage_steps=usage_steps,
+                tips=tips,
+                is_disabled=not plugin.is_active,
+                is_primary=is_primary
+            ))
+        
+        return PluginListResponse(success=True, plugins=plugin_items)
+    except Exception as e:
+        return PluginListResponse(success=False, plugins=[])
+
+
+@router.get("/plugin/info", response_model=PluginInfoResponse)
+async def get_plugin_info(
+    plugin_name: str = "windsurf-continue-pro",
+    db: Session = Depends(get_db)
+):
+    """
+    获取插件信息
+    - 公开接口，无需认证
+    - 返回插件的最新版本、下载地址等信息
+    """
+    plugin = db.query(PluginInfo).filter(
+        PluginInfo.plugin_name == plugin_name,
+        PluginInfo.is_active == True
+    ).first()
+    
+    if not plugin:
+        raise HTTPException(status_code=404, detail=f"未找到插件: {plugin_name}")
+    
+    return PluginInfoResponse(
+        plugin_name=plugin.plugin_name,
+        current_version=plugin.current_version,
+        min_version=plugin.min_version,
+        download_url=plugin.download_url,
+        changelog=plugin.changelog,
+        update_title=plugin.update_title,
+        update_description=plugin.update_description,
+        is_force_update=plugin.is_force_update,
+        file_size=plugin.file_size,
+        release_date=plugin.release_date
+    )
+
+
+@router.get("/plugin/check-update", response_model=PluginVersionCheckResponse)
+async def check_plugin_update(
+    plugin_name: str = "windsurf-continue-pro",
+    client_version: str = "1.0.0",
+    db: Session = Depends(get_db)
+):
+    """
+    检查插件是否需要更新
+    - 公开接口，无需认证
+    - 比较客户端版本和服务器版本
+    - 返回是否有更新、是否强制更新等信息
+    """
+    plugin = db.query(PluginInfo).filter(
+        PluginInfo.plugin_name == plugin_name,
+        PluginInfo.is_active == True
+    ).first()
+    
+    if not plugin:
+        # 未找到插件信息，返回无更新
+        return PluginVersionCheckResponse(
+            has_update=False,
+            is_force_update=False,
+            current_version=client_version,
+            latest_version=client_version
+        )
+    
+    # 版本比较函数
+    def version_tuple(v):
+        try:
+            return tuple(map(int, v.split('.')))
+        except:
+            return (0, 0, 0)
+    
+    client_ver = version_tuple(client_version)
+    server_ver = version_tuple(plugin.current_version)
+    min_ver = version_tuple(plugin.min_version) if plugin.min_version else (0, 0, 0)
+    
+    has_update = client_ver < server_ver
+    # 如果客户端版本低于最低版本，或者设置了强制更新，则强制更新
+    is_force = (client_ver < min_ver) or (has_update and plugin.is_force_update)
+    
+    return PluginVersionCheckResponse(
+        has_update=has_update,
+        is_force_update=is_force,
+        current_version=client_version,
+        latest_version=plugin.current_version,
+        download_url=plugin.download_url if has_update else None,
+        update_title=plugin.update_title if has_update else None,
+        update_description=plugin.update_description if has_update else None,
+        changelog=plugin.changelog if has_update else None,
+        file_size=plugin.file_size if has_update else None
+    )

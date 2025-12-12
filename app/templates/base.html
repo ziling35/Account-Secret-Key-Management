@@ -41,6 +41,18 @@
                 </a>
             </li>
             <li>
+                <a href="/admin/version-notes" class="{% if '/version-notes' in request.url.path %}active{% endif %}">
+                    <i class="bi bi-journal-text"></i>
+                    <span>版本说明</span>
+                </a>
+            </li>
+            <li>
+                <a href="/admin/plugins" class="{% if '/plugins' in request.url.path %}active{% endif %}">
+                    <i class="bi bi-puzzle"></i>
+                    <span>插件管理</span>
+                </a>
+            </li>
+            <li>
                 <a href="/admin/settings" class="{% if '/settings' in request.url.path %}active{% endif %}">
                     <i class="bi bi-gear"></i>
                     <span>系统设置</span>
