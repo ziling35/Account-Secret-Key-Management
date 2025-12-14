@@ -1231,9 +1231,9 @@ async def create_plugin(
     changelog: str = Form(None),
     update_title: str = Form(None),
     update_description: str = Form(None),
-    is_force_update: bool = Form(False),
-    is_active: bool = Form(True),
-    is_primary: bool = Form(False),
+    is_force_update: str = Form('false'),  # 改为 str 以正确处理 "true"/"false"
+    is_active: str = Form('true'),  # 改为 str 以正确处理 "true"/"false"
+    is_primary: str = Form('false'),  # 改为 str 以正确处理 "true"/"false"
     file_size: str = Form(None),
     sort_order: int = Form(0),
     # 客户端展示字段
@@ -1258,37 +1258,47 @@ async def create_plugin(
         # 解析JSON字段
         import json
         def parse_json_field(value):
-            if not value:
+            if not value or not value.strip():
                 return None
             try:
                 return json.loads(value)
             except:
                 return None
         
+        # 解析布尔字段（处理 "true"/"false" 字符串）
+        def parse_bool_field(value, default=False):
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes', 'on')
+            return bool(value)
+        
         plugin = PluginInfo(
             plugin_name=plugin_name,
-            display_name=display_name,
-            description=description,
-            ide_type=ide_type,
+            display_name=display_name if display_name and display_name.strip() else None,
+            description=description if description and description.strip() else None,
+            ide_type=ide_type or 'windsurf',
             current_version=current_version,
-            min_version=min_version,
+            min_version=min_version if min_version and min_version.strip() else None,
             download_url=download_url,
-            changelog=changelog,
-            update_title=update_title,
-            update_description=update_description,
-            is_force_update=is_force_update,
-            is_active=is_active,
-            is_primary=is_primary,
-            file_size=file_size,
-            icon=icon,
+            changelog=changelog if changelog and changelog.strip() else None,
+            update_title=update_title if update_title and update_title.strip() else None,
+            update_description=update_description if update_description and update_description.strip() else None,
+            is_force_update=parse_bool_field(is_force_update, False),
+            is_active=parse_bool_field(is_active, True),
+            is_primary=parse_bool_field(is_primary, False),
+            file_size=file_size if file_size and file_size.strip() else None,
+            icon=icon if icon and icon.strip() else 'shield-check',
             icon_gradient=parse_json_field(icon_gradient),
             features=parse_json_field(features),
             usage_steps=parse_json_field(usage_steps),
             tips=parse_json_field(tips),
-            mcp_config_path=mcp_config_path,
-            extensions_path=extensions_path,
+            mcp_config_path=mcp_config_path if mcp_config_path and mcp_config_path.strip() else None,
+            extensions_path=extensions_path if extensions_path and extensions_path.strip() else None,
             mcp_extra_config=parse_json_field(mcp_extra_config),
-            sort_order=sort_order,
+            sort_order=sort_order or 0,
             release_date=datetime.utcnow()
         )
         
@@ -1316,9 +1326,9 @@ async def update_plugin(
     changelog: str = Form(None),
     update_title: str = Form(None),
     update_description: str = Form(None),
-    is_force_update: bool = Form(None),
-    is_active: bool = Form(None),
-    is_primary: bool = Form(None),
+    is_force_update: str = Form(None),  # 改为 str 以正确处理 "true"/"false"
+    is_active: str = Form(None),  # 改为 str 以正确处理 "true"/"false"
+    is_primary: str = Form(None),  # 改为 str 以正确处理 "true"/"false"
     file_size: str = Form(None),
     sort_order: int = Form(None),
     # 客户端展示字段
@@ -1339,65 +1349,81 @@ async def update_plugin(
         if not plugin:
             raise HTTPException(status_code=404, detail="插件不存在")
         
-        # 解析JSON字段
+        # 解析JSON字段（只有有效JSON才更新，空字符串保持原值）
         import json
-        def parse_json_field(value):
+        def parse_json_field(value, current_value=None):
             if value is None:
-                return None
-            if not value:
-                return None
+                return current_value  # 未提供时保持原值
+            if not value or not value.strip():
+                return current_value  # 空字符串保持原值
             try:
                 return json.loads(value)
             except:
-                return None
+                return current_value  # JSON解析失败保持原值
         
-        if plugin_name is not None:
+        # 解析布尔字段（处理 "true"/"false" 字符串）
+        def parse_bool_field(value):
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes', 'on')
+            return bool(value)
+        
+        # 更新基础字段（只有非空时才更新）
+        if plugin_name is not None and plugin_name.strip():
             plugin.plugin_name = plugin_name
         if display_name is not None:
-            plugin.display_name = display_name
+            plugin.display_name = display_name if display_name.strip() else None
         if description is not None:
-            plugin.description = description
-        if ide_type is not None:
+            plugin.description = description if description.strip() else None
+        if ide_type is not None and ide_type.strip():
             plugin.ide_type = ide_type
-        if current_version is not None:
+        if current_version is not None and current_version.strip():
             plugin.current_version = current_version
             plugin.release_date = datetime.utcnow()  # 更新版本时更新发布日期
-        if download_url is not None:
+        if download_url is not None and download_url.strip():
             plugin.download_url = download_url
         if min_version is not None:
-            plugin.min_version = min_version
+            plugin.min_version = min_version if min_version.strip() else None
         if changelog is not None:
-            plugin.changelog = changelog
+            plugin.changelog = changelog if changelog.strip() else None
         if update_title is not None:
-            plugin.update_title = update_title
+            plugin.update_title = update_title if update_title.strip() else None
         if update_description is not None:
-            plugin.update_description = update_description
+            plugin.update_description = update_description if update_description.strip() else None
+        
+        # 更新布尔字段
         if is_force_update is not None:
-            plugin.is_force_update = is_force_update
+            plugin.is_force_update = parse_bool_field(is_force_update)
         if is_active is not None:
-            plugin.is_active = is_active
+            plugin.is_active = parse_bool_field(is_active)
         if is_primary is not None:
-            plugin.is_primary = is_primary
+            plugin.is_primary = parse_bool_field(is_primary)
+        
         if file_size is not None:
-            plugin.file_size = file_size
+            plugin.file_size = file_size if file_size.strip() else None
         if sort_order is not None:
             plugin.sort_order = sort_order
         if icon is not None:
-            plugin.icon = icon
+            plugin.icon = icon if icon.strip() else 'shield-check'
+        
+        # 更新JSON字段（保持原值如果新值无效）
         if icon_gradient is not None:
-            plugin.icon_gradient = parse_json_field(icon_gradient)
+            plugin.icon_gradient = parse_json_field(icon_gradient, plugin.icon_gradient)
         if features is not None:
-            plugin.features = parse_json_field(features)
+            plugin.features = parse_json_field(features, plugin.features)
         if usage_steps is not None:
-            plugin.usage_steps = parse_json_field(usage_steps)
+            plugin.usage_steps = parse_json_field(usage_steps, plugin.usage_steps)
         if tips is not None:
-            plugin.tips = parse_json_field(tips)
+            plugin.tips = parse_json_field(tips, plugin.tips)
         if mcp_config_path is not None:
-            plugin.mcp_config_path = mcp_config_path
+            plugin.mcp_config_path = mcp_config_path if mcp_config_path.strip() else None
         if extensions_path is not None:
-            plugin.extensions_path = extensions_path
+            plugin.extensions_path = extensions_path if extensions_path.strip() else None
         if mcp_extra_config is not None:
-            plugin.mcp_extra_config = parse_json_field(mcp_extra_config)
+            plugin.mcp_extra_config = parse_json_field(mcp_extra_config, plugin.mcp_extra_config)
         
         plugin.updated_at = datetime.utcnow()
         db.commit()
