@@ -117,16 +117,14 @@ async def create_keys(
     if duration_days <= 0:
         raise HTTPException(status_code=400, detail="有效期必须大于0天")
     
-    if account_limit < 0:
-        raise HTTPException(status_code=400, detail="账号数量必顾不小于0（0 表示不限）")
+    if account_limit < -1:
+        raise HTTPException(status_code=400, detail="账号配额无效（-1=不限制, 0=仅授权不含账号, >0=固定配额）")
     
     # 验证无限额度类型
     if key_type == "unlimited" and account_limit > 0:
         raise HTTPException(status_code=400, detail="无限额度类型的账号配额必须为0")
     
-    # 验证有限额度类型
-    if key_type == "limited" and account_limit == 0:
-        raise HTTPException(status_code=400, detail="有限额度类型必须设置账号配额")
+    # 验证有限额度类型：允许 account_limit = 0，表示不能获取账号但密钥可用于插件授权
     
     keys = []
     for _ in range(count):
@@ -197,7 +195,7 @@ async def export_keys(
         # 配额信息
         limit = key.account_limit or 0
         remaining = (max(limit - (key.request_count or 0), 0) if limit > 0 else -1)
-        lines.append(f"  账号配额: {'不限' if limit == 0 else limit}")
+        lines.append(f"  账号配额: {'不限' if limit <= 0 else limit}")
         lines.append(f"  剩余额度: {'不限' if remaining == -1 else remaining}")
         if key.notes:
             lines.append(f"  备注: {key.notes}")
@@ -808,6 +806,19 @@ def get_statistics(db: Session) -> StatsResponse:
     active_keys = db.query(Key).filter(Key.status == KeyStatus.active).count()
     expired_keys = db.query(Key).filter(Key.status == KeyStatus.expired).count()
     
+    # 计算已激活卡密未获取账号总和（仅限有限额度类型）
+    # 公式：SUM(account_limit - request_count) for all active limited keys
+    pending_demand = db.query(
+        func.coalesce(
+            func.sum(Key.account_limit - Key.request_count),
+            0
+        )
+    ).filter(
+        Key.status == KeyStatus.active,
+        Key.key_type == KeyType.limited,
+        Key.is_disabled == False
+    ).scalar() or 0
+    
     return StatsResponse(
         total_accounts=total_accounts,
         unused_accounts=unused_accounts,
@@ -816,7 +827,8 @@ def get_statistics(db: Session) -> StatsResponse:
         total_keys=total_keys,
         inactive_keys=inactive_keys,
         active_keys=active_keys,
-        expired_keys=expired_keys
+        expired_keys=expired_keys,
+        pending_account_demand=max(0, pending_demand)
     )
 
 # ==================== 公告管理 API ====================

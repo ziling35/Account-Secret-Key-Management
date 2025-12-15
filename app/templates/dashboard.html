@@ -26,6 +26,12 @@
                 {% endif %}
             </div>
         </div>
+        <div style="text-align: center; padding: 8px 16px; background: #fce7f3; border-radius: 8px; border: 1px solid #f9a8d4;">
+            <div style="font-size: 0.75rem; color: #be185d; margin-bottom: 4px;">待获取账号需求</div>
+            <div style="font-size: 1.25rem; font-weight: 600; color: #db2777;">
+                {{ stats.pending_account_demand }}
+            </div>
+        </div>
     </div>
 </div>
 
@@ -85,10 +91,25 @@
 
 <!-- 系统状态 -->
 <div class="content-card">
-    <div style="padding: 20px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;">
+    <div style="padding: 20px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; margin-bottom: 15px;">
         <h4 style="margin-bottom: 10px; color: #1e40af;"><i class="bi bi-info-circle"></i> 系统状态</h4>
         <p style="margin: 0; color: #1e3a8a;">
             系统运行正常 | 可用账号 <strong>{{ stats.unused_accounts }}</strong> 个 | 活跃密钥 <strong>{{ stats.active_keys }}</strong> 个
+        </p>
+    </div>
+    {% set pool_health = stats.unused_accounts - stats.pending_account_demand %}
+    <div style="padding: 20px; border-radius: 8px; {% if pool_health >= 50 %}background: #dcfce7; border: 1px solid #86efac;{% elif pool_health >= 0 %}background: #fef9c3; border: 1px solid #fde047;{% else %}background: #fee2e2; border: 1px solid #fca5a5;{% endif %}">
+        <h4 style="margin-bottom: 10px; {% if pool_health >= 50 %}color: #166534;{% elif pool_health >= 0 %}color: #a16207;{% else %}color: #dc2626;{% endif %}">
+            <i class="bi bi-{% if pool_health >= 50 %}check-circle{% elif pool_health >= 0 %}exclamation-triangle{% else %}x-circle{% endif %}"></i> 号池健康度
+        </h4>
+        <p style="margin: 0; {% if pool_health >= 50 %}color: #15803d;{% elif pool_health >= 0 %}color: #ca8a04;{% else %}color: #b91c1c;{% endif %}">
+            待获取账号需求 <strong>{{ stats.pending_account_demand }}</strong> 个 | 
+            可用账号 <strong>{{ stats.unused_accounts }}</strong> 个 | 
+            {% if pool_health >= 0 %}
+                盈余 <strong>{{ pool_health }}</strong> 个
+            {% else %}
+                <strong style="color: #dc2626;">透支 {{ pool_health|abs }} 个，请及时补充号池！</strong>
+            {% endif %}
         </p>
     </div>
 </div>

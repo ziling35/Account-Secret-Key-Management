@@ -181,7 +181,19 @@ class WindsurfLoginService:
             )
             
             if response.status_code != 200:
-                raise Exception(f'注册请求失败: HTTP {response.status_code}')
+                # 获取响应体以便调试和错误处理
+                error_body = ""
+                error_message = ""
+                try:
+                    error_body = response.text
+                    print(f"⚠️ RegisterUser 失败: HTTP {response.status_code}, 响应: {error_body[:500]}")
+                    # 尝试解析 JSON 获取具体错误信息
+                    error_json = response.json()
+                    error_message = error_json.get('message', '') or error_json.get('error', '')
+                except:
+                    pass
+                # 在异常中包含具体错误信息，以便上层代码判断
+                raise Exception(f'注册请求失败: HTTP {response.status_code} - {error_message}')
             
             data = response.json()
             
@@ -233,6 +245,11 @@ class WindsurfLoginService:
             )
             
             if response.status_code != 200:
+                try:
+                    error_body = response.text
+                    print(f"⚠️ GetOneTimeAuthToken 失败: HTTP {response.status_code}, 响应: {error_body[:500]}")
+                except:
+                    pass
                 raise Exception(f'获取 Auth Token 失败: HTTP {response.status_code}')
             
             data = response.json()
@@ -280,6 +297,11 @@ class WindsurfLoginService:
             )
             
             if response.status_code != 200:
+                try:
+                    error_body = response.text
+                    print(f"⚠️ CreateTeamApiSecret 失败: HTTP {response.status_code}, 响应: {error_body[:500]}")
+                except:
+                    pass
                 raise Exception(f'创建 API Key 失败: HTTP {response.status_code}')
             
             data = response.json()

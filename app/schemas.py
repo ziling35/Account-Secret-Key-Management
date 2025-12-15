@@ -83,6 +83,8 @@ class StatsResponse(BaseModel):
     inactive_keys: int
     active_keys: int
     expired_keys: int
+    # 已激活卡密未获取账号总和（用于维护号池）
+    pending_account_demand: int = 0
 
 # 版本控制
 class VersionResponse(BaseModel):

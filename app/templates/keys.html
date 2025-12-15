@@ -221,7 +221,7 @@
                     </div>
                 </template>
                 <template #default="scope">
-                    <el-tag v-if="scope.row.account_limit === 0" size="small" type="info">不限</el-tag>
+                    <el-tag v-if="scope.row.account_limit === -1 || scope.row.account_limit === 0" size="small" type="info">不限</el-tag>
                     <span v-else>{{ scope.row.account_limit }}</span>
                 </template>
             </el-table-column>
@@ -312,8 +312,8 @@
                 <el-input-number v-model="createForm.duration_days" :min="1" style="width: 100%;"></el-input-number>
             </el-form-item>
             <el-form-item label="账号配额" v-if="createForm.key_type === 'limited'">
-                <el-input-number v-model="createForm.account_limit" :min="1" style="width: 100%;"></el-input-number>
-                <div style="color: #909399; font-size: 12px; margin-top: 4px;">有限额度必须设置账号总数</div>
+                <el-input-number v-model="createForm.account_limit" :min="-1" style="width: 100%;"></el-input-number>
+                <div style="color: #909399; font-size: 12px; margin-top: 4px;">-1=不限制, 0=仅授权不含账号, >0=固定配额</div>
             </el-form-item>
             <el-form-item label="备注">
                 <el-input v-model="createForm.notes" placeholder="可选"></el-input>
@@ -492,9 +492,8 @@ createApp({
             // 切换类型时自动调整账号配额
             if (type === 'unlimited') {
                 createForm.value.account_limit = 0;
-            } else if (createForm.value.account_limit === 0) {
-                createForm.value.account_limit = 5;
             }
+            // limited 类型时保持当前值，不自动调整
         };
 
         const handleCreateSubmit = async () => {

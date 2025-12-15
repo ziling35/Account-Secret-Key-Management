@@ -84,11 +84,17 @@ async def get_account(
                 )
     
     else:  # limited 有限额度
-        # 有限额度：只检查总额度限制
-        if (key.account_limit or 0) > 0:
+        # 有限额度：检查总额度限制
+        # account_limit = -1 表示不限制账号数量
+        # account_limit = 0 表示不能获取账号（但密钥可用于插件授权）
+        # account_limit > 0 表示固定配额
+        if key.account_limit == 0:
+            raise HTTPException(status_code=403, detail="该密钥不包含账号配额")
+        if key.account_limit > 0:
             remaining = max(key.account_limit - key.request_count, 0)
             if remaining <= 0:
                 raise HTTPException(status_code=403, detail="密钥额度已用尽")
+        # account_limit == -1 时不检查配额，直接放行
     
     # === 获取账号 ===
     
@@ -134,7 +140,11 @@ async def get_account(
             raise HTTPException(status_code=404, detail="暂无可用账号")
     
     # 检查账号是否有 API Key，如果没有则自动登录获取
-    if not account.api_key or account.api_key.strip() == '':
+    # 使用循环尝试多个账号，如果账号被封禁则自动跳过
+    max_retry = 5  # 最多尝试5个账号
+    retry_count = 0
+    
+    while not account.api_key or account.api_key.strip() == '':
         try:
             # 通过登录获取 API Key
             login_result = await windsurf_login(
@@ -150,9 +160,38 @@ async def get_account(
                 account.name = login_result['name']
             
             db.commit()
+            break  # 成功获取，跳出循环
+            
         except Exception as e:
-            # 登录失败，返回错误（使用403而不是500）
             error_msg = str(e)
+            
+            # 检查是否是账号被封禁/无效的错误
+            invalid_account_keywords = ['invalid email', 'invalid_email', 'email_not_found', 'user_not_found', 'account_disabled', 'permission denied']
+            if any(keyword in error_msg.lower() for keyword in invalid_account_keywords):
+                # 将该账号标记为过期
+                print(f"⚠️ 账号 {account.email} 已失效，自动标记为过期")
+                account.status = AccountStatus.expired
+                db.commit()
+                
+                retry_count += 1
+                if retry_count >= max_retry:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"连续{max_retry}个账号登录失败，暂无可用账号"
+                    )
+                
+                # 获取下一个账号
+                query = db.query(Account).filter(
+                    Account.status == AccountStatus.unused
+                )
+                if previously_assigned_emails:
+                    query = query.filter(Account.email.notin_(previously_assigned_emails))
+                account = query.order_by(Account.created_at.asc()).first()
+                
+                if not account:
+                    raise HTTPException(status_code=404, detail="暂无可用账号")
+                continue  # 尝试下一个账号
+            
             # 如果是账号池或额度相关的错误，明确提示
             if any(keyword in error_msg.lower() for keyword in ['quota', 'insufficient', '额度', '账号池', '账号不足']):
                 raise HTTPException(
