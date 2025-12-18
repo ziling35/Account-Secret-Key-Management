@@ -82,6 +82,7 @@
                 <el-select v-model="searchForm.key_type" placeholder="全部" clearable style="width: 100px;">
                     <el-option label="有限额度" value="limited"></el-option>
                     <el-option label="无限额度" value="unlimited"></el-option>
+                    <el-option label="Pro类型" value="pro"></el-option>
                 </el-select>
             </el-form-item>
             <el-form-item label="激活日期">
@@ -149,6 +150,7 @@
             <el-table-column v-if="visibleColumns.includes('key_type')" prop="key_type" label="类型" width="110" align="center">
                 <template #default="scope">
                     <el-tag v-if="scope.row.key_type === 'unlimited'" type="warning" size="small">无限额度</el-tag>
+                    <el-tag v-else-if="scope.row.key_type === 'pro'" type="success" size="small">Pro类型</el-tag>
                     <el-tag v-else type="primary" size="small">有限额度</el-tag>
                 </template>
             </el-table-column>
@@ -299,9 +301,11 @@
                 <el-radio-group v-model="createForm.key_type" @change="handleKeyTypeChange">
                     <el-radio label="limited">有限额度</el-radio>
                     <el-radio label="unlimited">无限额度</el-radio>
+                    <el-radio label="pro">Pro类型</el-radio>
                 </el-radio-group>
                 <div style="color: #909399; font-size: 12px; margin-top: 4px;">
                     <div v-if="createForm.key_type === 'limited'">✓ 账号总数有限，不限制获取频率</div>
+                    <div v-else-if="createForm.key_type === 'pro'">✓ 只能获取Pro账号，可重复获取，无需插件</div>
                     <div v-else>✓ 账号数量无限，每5分钟只能获取一次</div>
                 </div>
             </el-form-item>
@@ -311,7 +315,7 @@
             <el-form-item label="有效期（天）">
                 <el-input-number v-model="createForm.duration_days" :min="1" style="width: 100%;"></el-input-number>
             </el-form-item>
-            <el-form-item label="账号配额" v-if="createForm.key_type === 'limited'">
+            <el-form-item label="账号配额" v-if="createForm.key_type === 'limited' || createForm.key_type === 'pro'">
                 <el-input-number v-model="createForm.account_limit" :min="-1" style="width: 100%;"></el-input-number>
                 <div style="color: #909399; font-size: 12px; margin-top: 4px;">-1=不限制, 0=仅授权不含账号, >0=固定配额</div>
             </el-form-item>

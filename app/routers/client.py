@@ -83,6 +83,15 @@ async def get_account(
                     headers={"X-Retry-After": str(wait_seconds)}
                 )
     
+    elif key.key_type == KeyType.pro:
+        # Pro类型：检查总额度限制（与limited相同），但只获取pro账号
+        if key.account_limit == 0:
+            raise HTTPException(status_code=403, detail="该密钥不包含账号配额")
+        if key.account_limit > 0:
+            remaining = max(key.account_limit - key.request_count, 0)
+            if remaining <= 0:
+                raise HTTPException(status_code=403, detail="密钥额度已用尽")
+    
     else:  # limited 有限额度
         # 有限额度：检查总额度限制
         # account_limit = -1 表示不限制账号数量
@@ -108,22 +117,35 @@ async def get_account(
     if expired_accounts > 0:
         db.commit()
     
-    # 查询该密钥之前获取过的账号邮箱列表
-    previously_assigned_emails = db.query(Account.email).filter(
-        Account.assigned_to_key == api_key
-    ).all()
-    previously_assigned_emails = [email[0] for email in previously_assigned_emails]
-    
-    # 获取未使用的账号，排除该密钥之前获取过的账号，优先获取创建时间最久的
-    query = db.query(Account).filter(
-        Account.status == AccountStatus.unused
-    )
-    
-    # 如果有之前获取过的账号，排除它们
-    if previously_assigned_emails:
-        query = query.filter(Account.email.notin_(previously_assigned_emails))
-    
-    account = query.order_by(Account.created_at.asc()).first()
+    # Pro类型卡密特殊处理：允许获取相同账号，不排除之前获取过的
+    if key.key_type == KeyType.pro:
+        # Pro卡密：随机获取一个Pro账号（可以重复获取）
+        from sqlalchemy.sql.expression import func
+        query = db.query(Account).filter(
+            Account.is_pro == True,
+            Account.status != AccountStatus.expired  # 排除过期账号
+        )
+        account = query.order_by(func.random()).first()  # 随机选取
+        
+        if not account:
+            raise HTTPException(status_code=404, detail="暂无可用的Pro账号")
+    else:
+        # 非Pro卡密：查询该密钥之前获取过的账号邮箱列表
+        previously_assigned_emails = db.query(Account.email).filter(
+            Account.assigned_to_key == api_key
+        ).all()
+        previously_assigned_emails = [email[0] for email in previously_assigned_emails]
+        
+        # 获取未使用的账号，排除该密钥之前获取过的账号，优先获取创建时间最久的
+        query = db.query(Account).filter(
+            Account.status == AccountStatus.unused
+        )
+        
+        # 如果有之前获取过的账号，排除它们
+        if previously_assigned_emails:
+            query = query.filter(Account.email.notin_(previously_assigned_emails))
+        
+        account = query.order_by(Account.created_at.asc()).first()
     
     if not account:
         # 如果没有新账号了，检查是否所有账号都被该密钥使用过
@@ -181,12 +203,22 @@ async def get_account(
                     )
                 
                 # 获取下一个账号
-                query = db.query(Account).filter(
-                    Account.status == AccountStatus.unused
-                )
-                if previously_assigned_emails:
-                    query = query.filter(Account.email.notin_(previously_assigned_emails))
-                account = query.order_by(Account.created_at.asc()).first()
+                if key.key_type == KeyType.pro:
+                    # Pro卡密：随机获取另一个Pro账号
+                    from sqlalchemy.sql.expression import func
+                    query = db.query(Account).filter(
+                        Account.is_pro == True,
+                        Account.status != AccountStatus.expired,
+                        Account.id != account.id  # 排除当前失败的账号
+                    )
+                    account = query.order_by(func.random()).first()
+                else:
+                    query = db.query(Account).filter(
+                        Account.status == AccountStatus.unused
+                    )
+                    if previously_assigned_emails:
+                        query = query.filter(Account.email.notin_(previously_assigned_emails))
+                    account = query.order_by(Account.created_at.asc()).first()
                 
                 if not account:
                     raise HTTPException(status_code=404, detail="暂无可用账号")
@@ -204,10 +236,11 @@ async def get_account(
                 detail=f"账号登录失败: {error_msg}"
             )
     
-    # 更新账号状态
-    account.status = AccountStatus.used
-    account.assigned_at = now
-    account.assigned_to_key = api_key
+    # Pro卡密不更新账号状态（允许重复使用）
+    if key.key_type != KeyType.pro:
+        account.status = AccountStatus.used
+        account.assigned_at = now
+        account.assigned_to_key = api_key
     
     # 更新密钥统计
     key.request_count += 1
@@ -220,13 +253,17 @@ async def get_account(
     
     db.commit()
     
-    # 根据密钥类型决定是否返回密码
+    # 根据密钥类型决定返回内容
     response_data = {
         "email": account.email,
-        "api_key": account.api_key
+        "api_key": account.api_key,
+        "is_pro": account.is_pro
     }
     
-    if key.key_type == KeyType.limited:
+    if key.key_type == KeyType.pro:
+        # Pro类型：只返回名称，不返回密码
+        response_data["name"] = account.name or account.email.split('@')[0]
+    elif key.key_type == KeyType.limited:
         # 有限额度：返回密码
         response_data["password"] = account.password
     # 无限额度：不返回密码（前端显示 "PaperCrane"）
@@ -294,7 +331,8 @@ async def get_key_status(
         activated_at=activated_at_local,
         expires_at=expires_at_local,
         account_limit=limit,
-        remaining_accounts=remaining_accounts
+        remaining_accounts=remaining_accounts,
+        key_type=key.key_type.value  # 返回卡密类型
     )
 
 @router.get("/version", response_model=VersionResponse)

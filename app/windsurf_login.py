@@ -359,6 +359,97 @@ class WindsurfLoginService:
             except:
                 raise e  # 抛出原始错误
 
+    async def get_current_user(self, auth_token: str) -> Dict[str, Any]:
+        """
+        获取当前用户信息（包含积分）
+        
+        Args:
+            auth_token: Windsurf Auth Token
+        
+        Returns:
+            包含用户信息和积分的字典
+        
+        Raises:
+            Exception: 获取失败
+        """
+        try:
+            response = await self.client.post(
+                'https://web-backend.windsurf.com/exa.seat_management_pb.SeatManagementService/GetCurrentUser',
+                json={
+                    'auth_token': auth_token,
+                    'include_subscription': True,
+                },
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-Auth-Token': auth_token,
+                    'User-Agent': self.USER_AGENT,
+                }
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f'获取用户信息失败: HTTP {response.status_code}')
+            
+            return response.json()
+        
+        except httpx.HTTPError as e:
+            raise Exception(f'获取用户信息失败: {str(e)}')
+
+    async def get_credits_info(self, email: str, password: str) -> Dict[str, Any]:
+        """
+        获取账号积分信息
+        
+        Args:
+            email: 邮箱
+            password: 密码
+        
+        Returns:
+            包含积分信息的字典:
+            - email: 邮箱
+            - name: 用户名
+            - user_used_prompt_credits: 用户已用 prompt 积分
+            - user_used_flow_credits: 用户已用 flow 积分
+            - team_flex_credit_quota: 团队弹性积分配额
+            - team_used_flex_credits: 团队已用弹性积分
+            - team_used_prompt_credits: 团队已用 prompt 积分
+            - team_used_flow_credits: 团队已用 flow 积分
+            - plan_info: 套餐信息
+        
+        Raises:
+            Exception: 登录或获取失败
+        """
+        # 步骤1: Firebase 登录
+        firebase_token = await self.login_with_firebase(email, password)
+        
+        # 步骤2: 获取 Auth Token
+        auth_token = await self.get_windsurf_auth_token(firebase_token)
+        
+        # 步骤3: 获取当前用户信息
+        user_data = await self.get_current_user(auth_token)
+        
+        # 解析用户信息
+        user = user_data.get('user', {})
+        team = user_data.get('team', {})
+        plan_info = user_data.get('planInfo') or user_data.get('plan_info', {})
+        subscription = user_data.get('subscription', {})
+        
+        # 构建返回结果
+        result = {
+            'email': email,
+            'name': user.get('name', email.split('@')[0]),
+            'user_used_prompt_credits': user.get('usedPromptCredits') or user.get('used_prompt_credits', 0),
+            'user_used_flow_credits': user.get('usedFlowCredits') or user.get('used_flow_credits', 0),
+            'team_name': team.get('name', ''),
+            'team_flex_credit_quota': team.get('flexCreditQuota') or team.get('flex_credit_quota', 0),
+            'team_used_flex_credits': team.get('usedFlexCredits') or team.get('used_flex_credits', 0),
+            'team_used_prompt_credits': team.get('usedPromptCredits') or team.get('used_prompt_credits', 0),
+            'team_used_flow_credits': team.get('usedFlowCredits') or team.get('used_flow_credits', 0),
+            'plan_type': plan_info.get('planType') or plan_info.get('plan_type', 'unknown'),
+            'is_pro': user.get('pro', False),
+            'raw_data': user_data,  # 原始数据，便于调试
+        }
+        
+        return result
+
 
 async def windsurf_login(
     email: str, 
@@ -384,5 +475,33 @@ async def windsurf_login(
     service = WindsurfLoginService(firebase_api_key, db)
     try:
         return await service.login_and_get_api_key(email, password)
+    finally:
+        await service.close()
+
+
+async def get_account_credits(
+    email: str,
+    password: str,
+    firebase_api_key: Optional[str] = None,
+    db: Optional[Session] = None
+) -> Dict[str, Any]:
+    """
+    便捷函数：通过邮箱密码登录并获取账号积分信息
+    
+    Args:
+        email: 邮箱
+        password: 密码
+        firebase_api_key: Firebase API Key（可选）
+        db: 数据库会话（可选，用于读取配置）
+    
+    Returns:
+        包含积分信息的字典
+    
+    Raises:
+        Exception: 登录或获取失败
+    """
+    service = WindsurfLoginService(firebase_api_key, db)
+    try:
+        return await service.get_credits_info(email, password)
     finally:
         await service.close()

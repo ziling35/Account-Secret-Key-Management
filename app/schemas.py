@@ -12,6 +12,7 @@ class AccountCreate(BaseModel):
     password: str
     api_key: str
     name: str
+    is_pro: bool = False  # 是否为Pro账号
 
 class AccountResponse(BaseModel):
     id: int
@@ -20,6 +21,7 @@ class AccountResponse(BaseModel):
     api_key: str
     name: str
     status: str
+    is_pro: bool = False  # 是否为Pro账号
     created_at: datetime
     assigned_at: Optional[datetime]
     assigned_to_key: Optional[str]
@@ -62,7 +64,9 @@ class AccountGetResponse(BaseModel):
     email: str
     api_key: str
     password: Optional[str] = None  # 有限额度时返回密码，无限额度不返回
+    name: Optional[str] = None  # Pro账号返回名称（不返回密码）
     next_available_time: Optional[int] = None  # 下次可获取时间（秒数）
+    is_pro: bool = False  # 是否为Pro账号（客户端用于跳过插件检查）
 
 class KeyStatusResponse(BaseModel):
     status: str
@@ -72,6 +76,7 @@ class KeyStatusResponse(BaseModel):
     expires_at: Optional[datetime]
     account_limit: int
     remaining_accounts: int
+    key_type: str = "limited"  # 卡密类型: unlimited, limited, pro
 
 # 统计信息
 class StatsResponse(BaseModel):

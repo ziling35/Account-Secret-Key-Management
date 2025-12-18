@@ -16,6 +16,7 @@ class KeyStatus(enum.Enum):
 class KeyType(enum.Enum):
     unlimited = "unlimited"  # 无限额度（账号无限，5分钟限制）
     limited = "limited"      # 有限额度（账号有限，无频率限制）
+    pro = "pro"              # Pro类型（只能获取pro账号，无插件限制）
 
 class Account(Base):
     __tablename__ = "accounts"
@@ -26,6 +27,7 @@ class Account(Base):
     api_key = Column(String, nullable=True)  # 允许为空，使用时自动获取
     name = Column(String, nullable=True)  # 允许为空，使用时自动获取
     status = Column(SQLEnum(AccountStatus), default=AccountStatus.unused, nullable=False)
+    is_pro = Column(Boolean, default=False, nullable=False, index=True)  # 是否为Pro账号
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     assigned_at = Column(DateTime, nullable=True)
     assigned_to_key = Column(String, nullable=True)

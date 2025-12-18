@@ -161,11 +161,14 @@
                 </template>
             </el-table-column>
 
-            <el-table-column label="操作" width="150" align="center" fixed="right">
+            <el-table-column label="操作" width="220" align="center" fixed="right">
                 <template #default="scope">
-                    <el-dropdown @command="(command) => handleStatusUpdate(scope.row.id, command)">
+                    <el-button type="success" size="small" @click="queryCredits(scope.row)" :loading="scope.row.creditsLoading">
+                        <i class="bi bi-coin"></i> 查询积分
+                    </el-button>
+                    <el-dropdown @command="(command) => handleStatusUpdate(scope.row.id, command)" style="margin-left: 8px;">
                         <el-button type="primary" size="small">
-                            修改状态 <i class="bi bi-chevron-down"></i>
+                            状态 <i class="bi bi-chevron-down"></i>
                         </el-button>
                         <template #dropdown>
                             <el-dropdown-menu>
@@ -196,6 +199,61 @@
         </div>
     </el-card>
 
+    <!-- 积分查询对话框 -->
+    <el-dialog v-model="creditsDialogVisible" title="账号积分信息" width="550px">
+        <div v-if="creditsLoading" style="text-align: center; padding: 40px;">
+            <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+            <p style="margin-top: 16px; color: #909399;">正在查询积分信息...</p>
+        </div>
+        <div v-else-if="creditsData">
+            <el-descriptions :column="1" border>
+                <el-descriptions-item label="邮箱">{{ creditsData.email }}</el-descriptions-item>
+                <el-descriptions-item label="用户名">{{ creditsData.credits.name }}</el-descriptions-item>
+                <el-descriptions-item label="套餐类型">
+                    <el-tag :type="creditsData.credits.is_pro ? 'success' : 'info'">
+                        {{ creditsData.credits.is_pro ? 'Pro' : (creditsData.credits.plan_type || 'Free') }}
+                    </el-tag>
+                </el-descriptions-item>
+            </el-descriptions>
+            
+            <el-divider content-position="left">用户积分使用</el-divider>
+            <el-descriptions :column="2" border>
+                <el-descriptions-item label="已用 Prompt 积分">
+                    <span style="font-weight: bold; color: #E6A23C;">{{ creditsData.credits.user_used_prompt_credits || 0 }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="已用 Flow 积分">
+                    <span style="font-weight: bold; color: #409EFF;">{{ creditsData.credits.user_used_flow_credits || 0 }}</span>
+                </el-descriptions-item>
+            </el-descriptions>
+            
+            <el-divider content-position="left">团队积分信息</el-divider>
+            <el-descriptions :column="2" border>
+                <el-descriptions-item label="团队名称" :span="2">{{ creditsData.credits.team_name || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="弹性积分配额">
+                    <span style="font-weight: bold; color: #67C23A;">{{ creditsData.credits.team_flex_credit_quota || 0 }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="已用弹性积分">
+                    <span style="font-weight: bold; color: #F56C6C;">{{ creditsData.credits.team_used_flex_credits || 0 }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="团队已用 Prompt">{{ creditsData.credits.team_used_prompt_credits || 0 }}</el-descriptions-item>
+                <el-descriptions-item label="团队已用 Flow">{{ creditsData.credits.team_used_flow_credits || 0 }}</el-descriptions-item>
+            </el-descriptions>
+            
+            <div v-if="creditsData.credits.team_flex_credit_quota > 0" style="margin-top: 16px;">
+                <el-progress 
+                    :percentage="Math.min(100, Math.round((creditsData.credits.team_used_flex_credits / creditsData.credits.team_flex_credit_quota) * 100))"
+                    :stroke-width="18"
+                    :format="() => `${creditsData.credits.team_used_flex_credits} / ${creditsData.credits.team_flex_credit_quota}`"
+                    :status="creditsData.credits.team_used_flex_credits >= creditsData.credits.team_flex_credit_quota ? 'exception' : ''"
+                />
+                <p style="text-align: center; color: #909399; font-size: 12px; margin-top: 8px;">弹性积分使用进度</p>
+            </div>
+        </div>
+        <template #footer>
+            <el-button @click="creditsDialogVisible = false">关闭</el-button>
+        </template>
+    </el-dialog>
+
     <!-- 上传账号对话框 -->
     <el-dialog v-model="uploadDialogVisible" title="上传账号批量文件" width="600px">
         <el-upload
@@ -214,6 +272,14 @@
                 </div>
             </template>
         </el-upload>
+        <div style="margin-top: 16px;">
+            <el-checkbox v-model="uploadAsPro">
+                <span style="font-weight: 500;">标记为Pro账号</span>
+            </el-checkbox>
+            <div style="color: #909399; font-size: 12px; margin-left: 24px; margin-top: 4px;">
+                Pro账号仅供Pro类型卡密获取，可重复使用，客户端不显示密码
+            </div>
+        </div>
         <template #footer>
             <el-button @click="uploadDialogVisible = false">取消</el-button>
             <el-button type="primary" @click="handleUploadSubmit" :loading="uploading">上传</el-button>
@@ -234,6 +300,7 @@ createApp({
         const Refresh = ElementPlusIconsVue.Refresh;
         const Upload = ElementPlusIconsVue.Upload;
         const CopyDocument = ElementPlusIconsVue.CopyDocument;
+        const Loading = ElementPlusIconsVue.Loading;
 
         // 数据
         const loading = ref(false);
@@ -252,6 +319,12 @@ createApp({
         const uploading = ref(false);
         const uploadRef = ref(null);
         const fileList = ref([]);
+        const uploadAsPro = ref(false);
+
+        // 积分查询
+        const creditsDialogVisible = ref(false);
+        const creditsLoading = ref(false);
+        const creditsData = ref(null);
 
         // 计算属性
         const accountCountText = computed(() => {
@@ -331,14 +404,17 @@ createApp({
                 fileList.value.forEach(file => {
                     formData.append('files', file.raw);
                 });
+                formData.append('is_pro', uploadAsPro.value);
 
                 await axios.post('/admin/api/accounts/upload', formData, {
                     headers: { 'Content-Type': 'multipart/form-data' }
                 });
 
-                ElMessage.success('上传成功');
+                const proText = uploadAsPro.value ? '（Pro账号）' : '';
+                ElMessage.success(`上传成功${proText}`);
                 uploadDialogVisible.value = false;
                 fileList.value = [];
+                uploadAsPro.value = false;
                 loadAccounts();
             } catch (error) {
                 ElMessage.error('上传失败: ' + (error.response?.data?.detail || error.message));
@@ -452,20 +528,37 @@ createApp({
             }
         };
 
+        const queryCredits = async (account) => {
+            creditsDialogVisible.value = true;
+            creditsLoading.value = true;
+            creditsData.value = null;
+            
+            try {
+                const response = await axios.get(`/admin/api/accounts/credits/${account.id}`);
+                creditsData.value = response.data;
+            } catch (error) {
+                ElMessage.error('查询积分失败: ' + (error.response?.data?.detail || error.message));
+                creditsDialogVisible.value = false;
+            } finally {
+                creditsLoading.value = false;
+            }
+        };
+
         onMounted(() => {
             loadColumnPreference();
             loadAccounts();
         });
 
         return {
-            Refresh, Upload, CopyDocument,
+            Refresh, Upload, CopyDocument, Loading,
             loading, accounts, currentPage, pageSize, total, currentStatus, currentSort,
-            visibleColumns, uploadDialogVisible, uploading, uploadRef, fileList,
+            visibleColumns, uploadDialogVisible, uploading, uploadRef, fileList, uploadAsPro,
+            creditsDialogVisible, creditsLoading, creditsData,
             accountCountText, sortChips,
             loadAccounts, handleStatusChange, handlePageSizeChange,
             handleUpload, handleFileChange, handleUploadSubmit,
             handleColumnSort, getSortIcon, removeSort, copyText, truncate, formatDateTime, saveColumnPreference,
-            handleStatusUpdate
+            handleStatusUpdate, queryCredits
         };
     }
 }).use(ElementPlus).mount('#accountApp');

@@ -111,8 +111,8 @@ async def create_keys(
     if count <= 0 or count > 100:
         raise HTTPException(status_code=400, detail="数量必须在1-100之间")
     
-    if key_type not in ["unlimited", "limited"]:
-        raise HTTPException(status_code=400, detail="密钥类型必须为 unlimited 或 limited")
+    if key_type not in ["unlimited", "limited", "pro"]:
+        raise HTTPException(status_code=400, detail="密钥类型必须为 unlimited、limited 或 pro")
     
     if duration_days <= 0:
         raise HTTPException(status_code=400, detail="有效期必须大于0天")
@@ -347,11 +347,14 @@ async def list_accounts(
     page: int = 1,
     page_size: int = 20,
     status: str = None,
+    is_pro: str = None,
     sort: str = None,
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
-    """获取账号列表（分页）"""
+    """获取账号列表（分页）
+    - is_pro: 筛选Pro账号 ('true' 或 'false')
+    """
     query = db.query(Account)
     
     if status:
@@ -359,6 +362,13 @@ async def list_accounts(
             query = query.filter(Account.status == AccountStatus[status])
         except Exception:
             pass
+    
+    # 筛选Pro账号
+    if is_pro is not None:
+        if is_pro.lower() == 'true':
+            query = query.filter(Account.is_pro == True)
+        elif is_pro.lower() == 'false':
+            query = query.filter(Account.is_pro == False)
     
     # 计算总数
     total = query.count()
@@ -481,13 +491,83 @@ async def update_account_status(
         "new_status": status
     }
 
-@router.post("/api/accounts/upload")
-async def upload_accounts(
-    files: List[UploadFile] = File(...),
+@router.post("/api/accounts/toggle-pro/{account_id}")
+async def toggle_account_pro(
+    account_id: int,
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
-    """上传账号批量文件（支持多文件）"""
+    """切换账号的Pro状态"""
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    
+    old_is_pro = account.is_pro
+    account.is_pro = not account.is_pro
+    db.commit()
+    
+    status_text = "Pro账号" if account.is_pro else "普通账号"
+    return {
+        "success": True,
+        "message": f"账号已设为{status_text}",
+        "account_id": account_id,
+        "is_pro": account.is_pro,
+        "old_is_pro": old_is_pro
+    }
+
+@router.get("/api/accounts/credits/{account_id}")
+async def get_account_credits(
+    account_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """查询账号积分信息"""
+    from app.windsurf_login import get_account_credits as query_credits
+    
+    # 查找账号
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    
+    try:
+        # 调用积分查询服务
+        credits_info = await query_credits(
+            email=account.email,
+            password=account.password,
+            db=db
+        )
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "email": account.email,
+            "credits": {
+                "name": credits_info.get('name', ''),
+                "is_pro": credits_info.get('is_pro', False),
+                "plan_type": credits_info.get('plan_type', 'unknown'),
+                "user_used_prompt_credits": credits_info.get('user_used_prompt_credits', 0),
+                "user_used_flow_credits": credits_info.get('user_used_flow_credits', 0),
+                "team_name": credits_info.get('team_name', ''),
+                "team_flex_credit_quota": credits_info.get('team_flex_credit_quota', 0),
+                "team_used_flex_credits": credits_info.get('team_used_flex_credits', 0),
+                "team_used_prompt_credits": credits_info.get('team_used_prompt_credits', 0),
+                "team_used_flow_credits": credits_info.get('team_used_flow_credits', 0),
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询积分失败: {str(e)}")
+
+
+@router.post("/api/accounts/upload")
+async def upload_accounts(
+    files: List[UploadFile] = File(...),
+    is_pro: bool = Form(False),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """上传账号批量文件（支持多文件）
+    - is_pro: 是否为Pro账号
+    """
     total_accounts = 0
     success_count = 0
     duplicate_count = 0
@@ -520,7 +600,8 @@ async def upload_accounts(
                 email=acc_data['email'],
                 name=acc_data['name'],
                 password=acc_data['password'],
-                api_key=acc_data['api_key']
+                api_key=acc_data['api_key'],
+                is_pro=is_pro
             )
             db.add(account)
             success_count += 1
@@ -534,7 +615,8 @@ async def upload_accounts(
         "success": True,
         "total": total_accounts,
         "success_count": success_count,
-        "duplicate_count": duplicate_count
+        "duplicate_count": duplicate_count,
+        "is_pro": is_pro
     }
 
 
