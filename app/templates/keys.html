@@ -305,7 +305,7 @@
                 </el-radio-group>
                 <div style="color: #909399; font-size: 12px; margin-top: 4px;">
                     <div v-if="createForm.key_type === 'limited'">✓ 账号总数有限，不限制获取频率</div>
-                    <div v-else-if="createForm.key_type === 'pro'">✓ 只能获取Pro账号，可重复获取，无需插件</div>
+                    <div v-else-if="createForm.key_type === 'pro'">✓ 只能获取Pro账号，可重复获取，需配置账号配额</div>
                     <div v-else>✓ 账号数量无限，每5分钟只能获取一次</div>
                 </div>
             </el-form-item>

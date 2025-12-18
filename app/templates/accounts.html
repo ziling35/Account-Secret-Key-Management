@@ -15,6 +15,9 @@
             <div class="card-header">
                 <span><i class="bi bi-list"></i> 账号列表 <span style="color: #909399; font-size: 14px; font-weight: 400;">{{ accountCountText }}</span></span>
                 <div>
+                    <el-button type="danger" @click="handleBatchDelete" :disabled="selectedAccounts.length === 0" :icon="Delete">
+                        批量删除 <span v-if="selectedAccounts.length > 0">({{ selectedAccounts.length }})</span>
+                    </el-button>
                     <el-button type="primary" @click="handleUpload" :icon="Upload">上传导入</el-button>
                     <el-button @click="loadAccounts" :icon="Refresh">刷新</el-button>
                     <el-select v-model="pageSize" @change="handlePageSizeChange" style="width: 110px; margin-left: 8px;">
@@ -58,13 +61,24 @@
             </div>
         </template>
 
-        <div style="margin-bottom: 16px;">
-            <el-radio-group v-model="currentStatus" @change="handleStatusChange">
-                <el-radio-button label="">全部</el-radio-button>
-                <el-radio-button label="unused">未使用</el-radio-button>
-                <el-radio-button label="used">已使用</el-radio-button>
-                <el-radio-button label="expired">已过期</el-radio-button>
-            </el-radio-group>
+        <div style="margin-bottom: 16px; display: flex; gap: 24px; align-items: center;">
+            <div>
+                <span style="color: #606266; margin-right: 8px;">账号类型：</span>
+                <el-radio-group v-model="accountType" @change="handleAccountTypeChange">
+                    <el-radio-button label="">全部</el-radio-button>
+                    <el-radio-button label="normal">普通账号</el-radio-button>
+                    <el-radio-button label="pro">Pro账号</el-radio-button>
+                </el-radio-group>
+            </div>
+            <div>
+                <span style="color: #606266; margin-right: 8px;">状态：</span>
+                <el-radio-group v-model="currentStatus" @change="handleStatusChange">
+                    <el-radio-button label="">全部</el-radio-button>
+                    <el-radio-button label="unused">未使用</el-radio-button>
+                    <el-radio-button label="used">已使用</el-radio-button>
+                    <el-radio-button label="expired">已过期</el-radio-button>
+                </el-radio-group>
+            </div>
         </div>
 
         <!-- 排序Chips -->
@@ -88,7 +102,9 @@
             v-loading="loading"
             stripe
             border
-            style="width: 100%">
+            style="width: 100%"
+            @selection-change="handleSelectionChange">
+            <el-table-column type="selection" width="50" align="center"></el-table-column>
             <el-table-column type="index" label="序号" width="70" align="center"></el-table-column>
 
             <el-table-column v-if="visibleColumns.includes('email')" prop="email" label="邮箱" min-width="220" align="center">
@@ -161,10 +177,10 @@
                 </template>
             </el-table-column>
 
-            <el-table-column label="操作" width="220" align="center" fixed="right">
+            <el-table-column label="操作" width="280" align="center" fixed="right">
                 <template #default="scope">
                     <el-button type="success" size="small" @click="queryCredits(scope.row)" :loading="scope.row.creditsLoading">
-                        <i class="bi bi-coin"></i> 查询积分
+                        <i class="bi bi-coin"></i> 积分
                     </el-button>
                     <el-dropdown @command="(command) => handleStatusUpdate(scope.row.id, command)" style="margin-left: 8px;">
                         <el-button type="primary" size="small">
@@ -184,6 +200,13 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
+                    <el-popconfirm title="确定删除此账号？" @confirm="handleDelete(scope.row)" confirm-button-text="删除" cancel-button-text="取消">
+                        <template #reference>
+                            <el-button type="danger" size="small" style="margin-left: 8px;">
+                                <i class="bi bi-trash"></i> 删除
+                            </el-button>
+                        </template>
+                    </el-popconfirm>
                 </template>
             </el-table-column>
         </el-table>
@@ -301,6 +324,7 @@ createApp({
         const Upload = ElementPlusIconsVue.Upload;
         const CopyDocument = ElementPlusIconsVue.CopyDocument;
         const Loading = ElementPlusIconsVue.Loading;
+        const Delete = ElementPlusIconsVue.Delete;
 
         // 数据
         const loading = ref(false);
@@ -309,6 +333,7 @@ createApp({
         const pageSize = ref(10);
         const total = ref(0);
         const currentStatus = ref('');
+        const accountType = ref('');  // '' 全部, 'normal' 普通, 'pro' Pro账号
         const currentSort = ref([{ field: 'created_at', dir: 'desc' }]);
 
         // 显示列
@@ -326,13 +351,18 @@ createApp({
         const creditsLoading = ref(false);
         const creditsData = ref(null);
 
+        // 选中的账号
+        const selectedAccounts = ref([]);
+
         // 计算属性
         const accountCountText = computed(() => {
             if (total.value === 0) return '';
+            const typeText = accountType.value === 'pro' ? 'Pro' : 
+                             accountType.value === 'normal' ? '普通' : '';
             const statusText = currentStatus.value ? 
                 (currentStatus.value === 'used' ? '已使用' : 
                  currentStatus.value === 'unused' ? '未使用' : '已过期') : '全部';
-            return `${statusText} ${total.value} 个`;
+            return `${typeText}${statusText} ${total.value} 个`;
         });
 
         const sortChips = computed(() => {
@@ -357,6 +387,8 @@ createApp({
                 };
 
                 if (currentStatus.value) params.status = currentStatus.value;
+                if (accountType.value === 'pro') params.is_pro = 'true';
+                else if (accountType.value === 'normal') params.is_pro = 'false';
                 if (currentSort.value.length > 0) {
                     params.sort = currentSort.value.map(s => `${s.field}:${s.dir}`).join(',');
                 }
@@ -374,6 +406,11 @@ createApp({
         };
 
         const handleStatusChange = () => {
+            currentPage.value = 1;
+            loadAccounts();
+        };
+
+        const handleAccountTypeChange = () => {
             currentPage.value = 1;
             loadAccounts();
         };
@@ -544,21 +581,62 @@ createApp({
             }
         };
 
+        const handleSelectionChange = (selection) => {
+            selectedAccounts.value = selection;
+        };
+
+        const handleDelete = async (account) => {
+            try {
+                const isPro = accountType.value === 'pro' ? 'true' : 'false';
+                await axios.delete(`/admin/api/accounts/${account.id}?is_pro=${isPro}`);
+                ElMessage.success(`账号 ${account.email} 已删除`);
+                loadAccounts();
+            } catch (error) {
+                ElMessage.error('删除失败: ' + (error.response?.data?.detail || error.message));
+            }
+        };
+
+        const handleBatchDelete = async () => {
+            if (selectedAccounts.value.length === 0) {
+                ElMessage.warning('请先选择要删除的账号');
+                return;
+            }
+            
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    `确定删除选中的 ${selectedAccounts.value.length} 个账号？`,
+                    '批量删除确认',
+                    { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+                );
+                
+                const ids = selectedAccounts.value.map(acc => acc.id);
+                const isPro = accountType.value === 'pro' ? 'true' : 'false';
+                await axios.post(`/admin/api/accounts/batch-delete?is_pro=${isPro}`, ids);
+                ElMessage.success(`已删除 ${ids.length} 个账号`);
+                selectedAccounts.value = [];
+                loadAccounts();
+            } catch (error) {
+                if (error !== 'cancel') {
+                    ElMessage.error('批量删除失败: ' + (error.response?.data?.detail || error.message));
+                }
+            }
+        };
+
         onMounted(() => {
             loadColumnPreference();
             loadAccounts();
         });
 
         return {
-            Refresh, Upload, CopyDocument, Loading,
-            loading, accounts, currentPage, pageSize, total, currentStatus, currentSort,
+            Refresh, Upload, CopyDocument, Loading, Delete,
+            loading, accounts, currentPage, pageSize, total, currentStatus, accountType, currentSort,
             visibleColumns, uploadDialogVisible, uploading, uploadRef, fileList, uploadAsPro,
-            creditsDialogVisible, creditsLoading, creditsData,
+            creditsDialogVisible, creditsLoading, creditsData, selectedAccounts,
             accountCountText, sortChips,
-            loadAccounts, handleStatusChange, handlePageSizeChange,
+            loadAccounts, handleStatusChange, handleAccountTypeChange, handlePageSizeChange,
             handleUpload, handleFileChange, handleUploadSubmit,
             handleColumnSort, getSortIcon, removeSort, copyText, truncate, formatDateTime, saveColumnPreference,
-            handleStatusUpdate, queryCredits
+            handleStatusUpdate, queryCredits, handleSelectionChange, handleDelete, handleBatchDelete
         };
     }
 }).use(ElementPlus).mount('#accountApp');

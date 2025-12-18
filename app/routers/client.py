@@ -5,7 +5,7 @@ import math
 import os
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
+from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo, AccountAssignmentHistory
 from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse, AccountHistoryResponse, AccountHistoryItem, VersionNotesResponse, VersionNoteItem, PluginInfoResponse, PluginVersionCheckResponse, PluginListResponse, PluginListItem
 from app.auth import get_api_key
 from app.utils import calculate_remaining_time
@@ -117,13 +117,12 @@ async def get_account(
     if expired_accounts > 0:
         db.commit()
     
-    # Pro类型卡密特殊处理：允许获取相同账号，不排除之前获取过的
+    # Pro类型卡密特殊处理：从 ProAccount 表获取未使用的Pro账号
     if key.key_type == KeyType.pro:
-        # Pro卡密：随机获取一个Pro账号（可以重复获取）
+        # Pro卡密：随机获取一个未使用的Pro账号
         from sqlalchemy.sql.expression import func
-        query = db.query(Account).filter(
-            Account.is_pro == True,
-            Account.status != AccountStatus.expired  # 排除过期账号
+        query = db.query(ProAccount).filter(
+            ProAccount.status == AccountStatus.unused  # 只获取未使用的账号
         )
         account = query.order_by(func.random()).first()  # 随机选取
         
@@ -137,8 +136,10 @@ async def get_account(
         previously_assigned_emails = [email[0] for email in previously_assigned_emails]
         
         # 获取未使用的账号，排除该密钥之前获取过的账号，优先获取创建时间最久的
+        # 普通卡密不能获取Pro账号
         query = db.query(Account).filter(
-            Account.status == AccountStatus.unused
+            Account.status == AccountStatus.unused,
+            Account.is_pro == False
         )
         
         # 如果有之前获取过的账号，排除它们
@@ -204,17 +205,17 @@ async def get_account(
                 
                 # 获取下一个账号
                 if key.key_type == KeyType.pro:
-                    # Pro卡密：随机获取另一个Pro账号
+                    # Pro卡密：随机获取另一个未使用的Pro账号
                     from sqlalchemy.sql.expression import func
-                    query = db.query(Account).filter(
-                        Account.is_pro == True,
-                        Account.status != AccountStatus.expired,
-                        Account.id != account.id  # 排除当前失败的账号
+                    query = db.query(ProAccount).filter(
+                        ProAccount.status == AccountStatus.unused,  # 只获取未使用的账号
+                        ProAccount.id != account.id  # 排除当前失败的账号
                     )
                     account = query.order_by(func.random()).first()
                 else:
                     query = db.query(Account).filter(
-                        Account.status == AccountStatus.unused
+                        Account.status == AccountStatus.unused,
+                        Account.is_pro == False
                     )
                     if previously_assigned_emails:
                         query = query.filter(Account.email.notin_(previously_assigned_emails))
@@ -236,11 +237,24 @@ async def get_account(
                 detail=f"账号登录失败: {error_msg}"
             )
     
-    # Pro卡密不更新账号状态（允许重复使用）
-    if key.key_type != KeyType.pro:
-        account.status = AccountStatus.used
-        account.assigned_at = now
-        account.assigned_to_key = api_key
+    # 更新账号状态为已使用
+    account.status = AccountStatus.used
+    account.assigned_at = now
+    account.assigned_to_key = api_key
+    
+    # Pro卡密：同时记录到获取历史表
+    if key.key_type == KeyType.pro:
+        history_record = AccountAssignmentHistory(
+            key_code=api_key,
+            account_id=account.id,
+            email=account.email,
+            password=account.password,
+            api_key=account.api_key,
+            name=account.name,
+            is_pro=True,
+            assigned_at=now
+        )
+        db.add(history_record)
     
     # 更新密钥统计
     key.request_count += 1
@@ -254,10 +268,11 @@ async def get_account(
     db.commit()
     
     # 根据密钥类型决定返回内容
+    is_pro_account = key.key_type == KeyType.pro  # Pro账号来自 ProAccount 表
     response_data = {
         "email": account.email,
         "api_key": account.api_key,
-        "is_pro": account.is_pro
+        "is_pro": is_pro_account
     }
     
     if key.key_type == KeyType.pro:
@@ -492,6 +507,7 @@ async def get_account_history(
     获取该密钥关联的所有账号历史
     - 需要在请求头中提供 X-API-Key
     - 返回该密钥曾经获取过的所有账号（包含密码）
+    - 同时查询普通账号和Pro账号历史
     """
     # 验证密钥
     key = db.query(Key).filter(Key.key_code == api_key).first()
@@ -503,22 +519,42 @@ async def get_account_history(
         raise HTTPException(status_code=403, detail="密钥已被管理员禁用")
     
     try:
-        # 查询该密钥关联的所有账号
-        accounts = db.query(Account).filter(
-            Account.assigned_to_key == api_key
+        account_list = []
+        
+        # 1. 查询普通账号（通过 assigned_to_key 关联，排除Pro账号避免重复）
+        normal_accounts = db.query(Account).filter(
+            Account.assigned_to_key == api_key,
+            Account.is_pro == False  # 排除Pro账号，Pro账号在历史表中查询
         ).order_by(Account.assigned_at.desc()).all()
         
-        # 转换为响应格式
-        account_list = [
-            AccountHistoryItem(
+        for acc in normal_accounts:
+            account_list.append(AccountHistoryItem(
                 email=acc.email,
                 password=acc.password,
                 api_key=acc.api_key,
                 name=acc.name,
-                assigned_at=acc.assigned_at
-            )
-            for acc in accounts
-        ]
+                assigned_at=acc.assigned_at,
+                is_pro=False  # 普通账号
+            ))
+        
+        # 2. 查询Pro账号历史（通过历史表）
+        pro_history = db.query(AccountAssignmentHistory).filter(
+            AccountAssignmentHistory.key_code == api_key
+        ).order_by(AccountAssignmentHistory.assigned_at.desc()).all()
+        
+        for hist in pro_history:
+            account_list.append(AccountHistoryItem(
+                email=hist.email,
+                password=None,  # Pro账号不返回密码
+                api_key=hist.api_key,
+                name=hist.name,  # Pro账号显示名称
+                account_id=hist.account_id,  # Pro账号显示ID
+                assigned_at=hist.assigned_at,
+                is_pro=True  # Pro账号
+            ))
+        
+        # 按时间降序排序（合并后重新排序）
+        account_list.sort(key=lambda x: x.assigned_at if x.assigned_at else datetime.min, reverse=True)
         
         return AccountHistoryResponse(
             success=True,

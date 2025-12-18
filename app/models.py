@@ -32,6 +32,20 @@ class Account(Base):
     assigned_at = Column(DateTime, nullable=True)
     assigned_to_key = Column(String, nullable=True)
 
+class ProAccount(Base):
+    """Pro账号表（允许重复邮箱）"""
+    __tablename__ = "pro_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True, nullable=False)  # 不设置 unique，允许重复
+    password = Column(String, nullable=False)
+    api_key = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+    status = Column(SQLEnum(AccountStatus), default=AccountStatus.unused, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_at = Column(DateTime, nullable=True)
+    assigned_to_key = Column(String, nullable=True)
+
 class Key(Base):
     __tablename__ = "keys"
     
@@ -86,6 +100,21 @@ class VersionNote(Base):
     is_published = Column(Boolean, default=True, nullable=False, index=True)  # 是否发布
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AccountAssignmentHistory(Base):
+    """账号获取历史（用于记录Pro卡密等可重复获取账号的历史）"""
+    __tablename__ = "account_assignment_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key_code = Column(String, nullable=False, index=True)  # 密钥
+    account_id = Column(Integer, nullable=False, index=True)  # 账号ID
+    email = Column(String, nullable=False)  # 账号邮箱
+    password = Column(String, nullable=True)  # 账号密码
+    api_key = Column(String, nullable=True)  # API Key
+    name = Column(String, nullable=True)  # 账号名称
+    is_pro = Column(Boolean, default=False, nullable=False)  # 是否为Pro账号
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 获取时间
 
 
 class PluginInfo(Base):

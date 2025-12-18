@@ -90,6 +90,16 @@ class StatsResponse(BaseModel):
     expired_keys: int
     # 已激活卡密未获取账号总和（用于维护号池）
     pending_account_demand: int = 0
+    # Pro 账号统计
+    total_pro_accounts: int = 0
+    unused_pro_accounts: int = 0
+    used_pro_accounts: int = 0
+    expired_pro_accounts: int = 0
+    # Pro 密钥统计
+    total_pro_keys: int = 0
+    active_pro_keys: int = 0
+    # Pro 号池待获取需求
+    pending_pro_demand: int = 0
 
 # 版本控制
 class VersionResponse(BaseModel):
@@ -143,10 +153,12 @@ class LoginResponse(BaseModel):
 class AccountHistoryItem(BaseModel):
     """账号历史项"""
     email: str
-    password: str
+    password: Optional[str] = None  # Pro账号可能不返回密码
     api_key: Optional[str] = None
-    name: Optional[str] = None
+    name: Optional[str] = None  # 普通账号显示
+    account_id: Optional[int] = None  # Pro账号显示ID
     assigned_at: Optional[datetime] = None
+    is_pro: bool = False  # 是否为Pro账号
 
 class AccountHistoryResponse(BaseModel):
     """账号历史响应"""

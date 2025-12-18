@@ -7,7 +7,7 @@ from typing import List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import Account, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
+from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
 from app.schemas import (
     AccountResponse, KeyCreate, KeyResponse, StatsResponse,
     AnnouncementCreate, AnnouncementUpdate, AnnouncementListItem,
@@ -354,52 +354,101 @@ async def list_accounts(
 ):
     """获取账号列表（分页）
     - is_pro: 筛选Pro账号 ('true' 或 'false')
+    - Pro账号从 ProAccount 表查询，普通账号从 Account 表查询
     """
-    query = db.query(Account)
+    # 判断是否查询 Pro 账号
+    query_pro = is_pro is not None and is_pro.lower() == 'true'
     
-    if status:
-        try:
-            query = query.filter(Account.status == AccountStatus[status])
-        except Exception:
-            pass
-    
-    # 筛选Pro账号
-    if is_pro is not None:
-        if is_pro.lower() == 'true':
-            query = query.filter(Account.is_pro == True)
-        elif is_pro.lower() == 'false':
+    if query_pro:
+        # 查询 ProAccount 表
+        query = db.query(ProAccount)
+        if status:
+            try:
+                query = query.filter(ProAccount.status == AccountStatus[status])
+            except Exception:
+                pass
+        
+        total = query.count()
+        skip = (page - 1) * page_size
+        
+        order_by_clauses = []
+        if sort:
+            parts = [p.strip() for p in sort.split(',') if p.strip()]
+            for part in parts:
+                if ':' in part:
+                    field, direction = part.split(':', 1)
+                else:
+                    field, direction = part, 'desc'
+                direction = direction.lower()
+                is_desc = direction != 'asc'
+                col = None
+                if field == 'assigned_at':
+                    col = ProAccount.assigned_at
+                elif field == 'created_at':
+                    col = ProAccount.created_at
+                if col is not None:
+                    order_by_clauses.append(desc(col) if is_desc else asc(col))
+        if not order_by_clauses:
+            order_by_clauses = [desc(ProAccount.created_at)]
+        
+        accounts = query.order_by(*order_by_clauses).offset(skip).limit(page_size).all()
+        
+        # 转换为响应格式（ProAccount 没有 is_pro 字段，手动添加）
+        accounts_data = []
+        for acc in accounts:
+            accounts_data.append({
+                "id": acc.id,
+                "email": acc.email,
+                "password": acc.password,
+                "api_key": acc.api_key,
+                "name": acc.name,
+                "status": acc.status.value,
+                "is_pro": True,
+                "created_at": acc.created_at,
+                "assigned_at": acc.assigned_at,
+                "assigned_to_key": acc.assigned_to_key
+            })
+    else:
+        # 查询 Account 表（普通账号）
+        query = db.query(Account)
+        if status:
+            try:
+                query = query.filter(Account.status == AccountStatus[status])
+            except Exception:
+                pass
+        
+        # 排除 Pro 账号（如果 is_pro='false'）或显示全部普通账号
+        if is_pro is not None and is_pro.lower() == 'false':
             query = query.filter(Account.is_pro == False)
-    
-    # 计算总数
-    total = query.count()
-    
-    # 分页查询与排序
-    skip = (page - 1) * page_size
+        
+        total = query.count()
+        skip = (page - 1) * page_size
 
-    order_by_clauses = []
-    if sort:
-        parts = [p.strip() for p in sort.split(',') if p.strip()]
-        for part in parts:
-            if ':' in part:
-                field, direction = part.split(':', 1)
-            else:
-                field, direction = part, 'desc'
-            direction = direction.lower()
-            is_desc = direction != 'asc'
-            col = None
-            if field == 'assigned_at':
-                col = Account.assigned_at
-            elif field == 'created_at':
-                col = Account.created_at
-            if col is not None:
-                order_by_clauses.append(desc(col) if is_desc else asc(col))
-    if not order_by_clauses:
-        order_by_clauses = [desc(Account.created_at)]
+        order_by_clauses = []
+        if sort:
+            parts = [p.strip() for p in sort.split(',') if p.strip()]
+            for part in parts:
+                if ':' in part:
+                    field, direction = part.split(':', 1)
+                else:
+                    field, direction = part, 'desc'
+                direction = direction.lower()
+                is_desc = direction != 'asc'
+                col = None
+                if field == 'assigned_at':
+                    col = Account.assigned_at
+                elif field == 'created_at':
+                    col = Account.created_at
+                if col is not None:
+                    order_by_clauses.append(desc(col) if is_desc else asc(col))
+        if not order_by_clauses:
+            order_by_clauses = [desc(Account.created_at)]
 
-    accounts = query.order_by(*order_by_clauses).offset(skip).limit(page_size).all()
+        accounts = query.order_by(*order_by_clauses).offset(skip).limit(page_size).all()
+        accounts_data = [AccountResponse.from_orm(account).model_dump() for account in accounts]
     
     return {
-        "accounts": [AccountResponse.from_orm(account).model_dump() for account in accounts],
+        "accounts": accounts_data,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -497,10 +546,12 @@ async def toggle_account_pro(
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
-    """切换账号的Pro状态"""
+    """切换账号的Pro状态（已废弃）
+    注意：Pro账号现在使用单独的 ProAccount 表，此接口仅对旧的 Account 表中的 is_pro 字段有效
+    """
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
-        raise HTTPException(status_code=404, detail="账号不存在")
+        raise HTTPException(status_code=404, detail="账号不存在（注意：Pro账号现在在单独的表中）")
     
     old_is_pro = account.is_pro
     account.is_pro = not account.is_pro
@@ -509,10 +560,78 @@ async def toggle_account_pro(
     status_text = "Pro账号" if account.is_pro else "普通账号"
     return {
         "success": True,
-        "message": f"账号已设为{status_text}",
+        "message": f"账号已设为{status_text}（注意：新Pro账号请直接上传到ProAccount表）",
         "account_id": account_id,
         "is_pro": account.is_pro,
         "old_is_pro": old_is_pro
+    }
+
+@router.delete("/api/accounts/{account_id}")
+async def delete_account(
+    account_id: int,
+    is_pro: str = "false",
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除单个账号
+    - is_pro: 'true' 删除 ProAccount 表中的账号，'false' 删除 Account 表中的账号
+    """
+    is_pro_bool = is_pro.lower() == 'true'
+    
+    if is_pro_bool:
+        account = db.query(ProAccount).filter(ProAccount.id == account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Pro账号不存在")
+        email = account.email
+        db.delete(account)
+        db.commit()
+        return {
+            "success": True,
+            "message": f"Pro账号 {email} 已删除",
+            "account_id": account_id,
+            "is_pro": True
+        }
+    else:
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="账号不存在")
+        email = account.email
+        db.delete(account)
+        db.commit()
+        return {
+            "success": True,
+            "message": f"账号 {email} 已删除",
+            "account_id": account_id,
+            "is_pro": False
+        }
+
+@router.post("/api/accounts/batch-delete")
+async def batch_delete_accounts(
+    account_ids: List[int],
+    is_pro: str = "false",
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """批量删除账号
+    - is_pro: 'true' 删除 ProAccount 表中的账号，'false' 删除 Account 表中的账号
+    """
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="未提供账号ID列表")
+    
+    is_pro_bool = is_pro.lower() == 'true'
+    
+    if is_pro_bool:
+        deleted_count = db.query(ProAccount).filter(ProAccount.id.in_(account_ids)).delete(synchronize_session=False)
+    else:
+        deleted_count = db.query(Account).filter(Account.id.in_(account_ids)).delete(synchronize_session=False)
+    db.commit()
+    
+    account_type = "Pro账号" if is_pro_bool else "账号"
+    return {
+        "success": True,
+        "message": f"已删除 {deleted_count} 个{account_type}",
+        "deleted_count": deleted_count,
+        "is_pro": is_pro_bool
     }
 
 @router.get("/api/accounts/credits/{account_id}")
@@ -561,16 +680,20 @@ async def get_account_credits(
 @router.post("/api/accounts/upload")
 async def upload_accounts(
     files: List[UploadFile] = File(...),
-    is_pro: bool = Form(False),
+    is_pro: str = Form("false"),
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
     """上传账号批量文件（支持多文件）
     - is_pro: 是否为Pro账号
     """
+    # 手动解析字符串布尔值
+    is_pro_bool = is_pro.lower() in ('true', '1', 'yes')
+    
     total_accounts = 0
     success_count = 0
     duplicate_count = 0
+    seen_emails = set()  # 跟踪本次上传中已处理的邮箱
     
     for file in files:
         if not file.filename.endswith('.txt'):
@@ -590,10 +713,30 @@ async def upload_accounts(
         
         # 批量插入
         for acc_data in accounts_data:
-            # 检查是否已存在
+            email = acc_data['email'].lower()  # 统一小写比较
+            
+            if is_pro_bool:
+                # Pro账号：使用单独的 ProAccount 表，允许重复邮箱（不检查去重）
+                pro_account = ProAccount(
+                    email=acc_data['email'],
+                    name=acc_data['name'],
+                    password=acc_data['password'],
+                    api_key=acc_data['api_key']
+                )
+                db.add(pro_account)
+                success_count += 1
+                continue
+            
+            # 普通账号：检查本次上传中是否已有相同邮箱（批量内去重，避免数据库唯一约束冲突）
+            if email in seen_emails:
+                duplicate_count += 1
+                continue
+            
+            # 普通账号：检查数据库中是否已存在
             existing = db.query(Account).filter(Account.email == acc_data['email']).first()
             if existing:
                 duplicate_count += 1
+                seen_emails.add(email)
                 continue
             
             account = Account(
@@ -601,9 +744,10 @@ async def upload_accounts(
                 name=acc_data['name'],
                 password=acc_data['password'],
                 api_key=acc_data['api_key'],
-                is_pro=is_pro
+                is_pro=False
             )
             db.add(account)
+            seen_emails.add(email)
             success_count += 1
     
     db.commit()
@@ -616,7 +760,7 @@ async def upload_accounts(
         "total": total_accounts,
         "success_count": success_count,
         "duplicate_count": duplicate_count,
-        "is_pro": is_pro
+        "is_pro": is_pro_bool
     }
 
 
@@ -633,6 +777,7 @@ async def internal_upload_accounts(
     total_accounts = 0
     success_count = 0
     duplicate_count = 0
+    seen_emails = set()  # 跟踪本次上传中已处理的邮箱
     
     for file in files:
         if not file.filename.endswith('.txt'):
@@ -649,9 +794,18 @@ async def internal_upload_accounts(
         total_accounts += len(accounts_data)
         
         for acc_data in accounts_data:
+            email = acc_data['email'].lower()  # 统一小写比较
+            
+            # 检查本次上传中是否已有相同邮箱
+            if email in seen_emails:
+                duplicate_count += 1
+                continue
+            
+            # 检查数据库中是否已存在
             existing = db.query(Account).filter(Account.email == acc_data['email']).first()
             if existing:
                 duplicate_count += 1
+                seen_emails.add(email)
                 continue
             
             account = Account(
@@ -661,6 +815,7 @@ async def internal_upload_accounts(
                 api_key=acc_data['api_key']
             )
             db.add(account)
+            seen_emails.add(email)
             success_count += 1
     
     db.commit()
@@ -901,6 +1056,39 @@ def get_statistics(db: Session) -> StatsResponse:
         Key.is_disabled == False
     ).scalar() or 0
     
+    # Pro 账号统计（从 ProAccount 表查询）
+    total_pro_accounts = db.query(ProAccount).count()
+    unused_pro_accounts = db.query(ProAccount).filter(
+        ProAccount.status == AccountStatus.unused
+    ).count()
+    used_pro_accounts = db.query(ProAccount).filter(
+        ProAccount.status == AccountStatus.used
+    ).count()
+    expired_pro_accounts = db.query(ProAccount).filter(
+        ProAccount.status == AccountStatus.expired
+    ).count()
+    
+    # Pro 密钥统计
+    total_pro_keys = db.query(Key).filter(Key.key_type == KeyType.pro).count()
+    active_pro_keys = db.query(Key).filter(
+        Key.key_type == KeyType.pro,
+        Key.status == KeyStatus.active,
+        Key.is_disabled == False
+    ).count()
+    
+    # Pro 号池待获取需求（Pro类型密钥的剩余配额）
+    pending_pro_demand = db.query(
+        func.coalesce(
+            func.sum(Key.account_limit - Key.request_count),
+            0
+        )
+    ).filter(
+        Key.status == KeyStatus.active,
+        Key.key_type == KeyType.pro,
+        Key.is_disabled == False,
+        Key.account_limit > 0
+    ).scalar() or 0
+    
     return StatsResponse(
         total_accounts=total_accounts,
         unused_accounts=unused_accounts,
@@ -910,7 +1098,14 @@ def get_statistics(db: Session) -> StatsResponse:
         inactive_keys=inactive_keys,
         active_keys=active_keys,
         expired_keys=expired_keys,
-        pending_account_demand=max(0, pending_demand)
+        pending_account_demand=max(0, pending_demand),
+        total_pro_accounts=total_pro_accounts,
+        unused_pro_accounts=unused_pro_accounts,
+        used_pro_accounts=used_pro_accounts,
+        expired_pro_accounts=expired_pro_accounts,
+        total_pro_keys=total_pro_keys,
+        active_pro_keys=active_pro_keys,
+        pending_pro_demand=max(0, pending_pro_demand)
     )
 
 # ==================== 公告管理 API ====================
