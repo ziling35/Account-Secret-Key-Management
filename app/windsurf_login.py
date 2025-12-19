@@ -4,6 +4,7 @@ Windsurf 登录服务模块
 """
 import httpx
 import os
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 import re
@@ -212,6 +213,7 @@ class WindsurfLoginService:
                        user.get('username') or 
                        'Unknown')
             
+            print(f"✅ RegisterUser 成功获取 API Key: {api_key[:20]}...")
             return {
                 'api_key': api_key.strip(),
                 'name': name,
@@ -310,18 +312,65 @@ class WindsurfLoginService:
             if not secret:
                 raise Exception('响应中未找到 secret')
             
+            print(f"✅ CreateTeamApiSecret 成功获取长期密钥: {secret[:20]}...")
             return secret
         
         except httpx.HTTPError as e:
             raise Exception(f'创建 API Key 失败: {str(e)}')
     
-    async def login_and_get_api_key(self, email: str, password: str) -> Dict[str, Any]:
+    async def login_and_get_auth_token(self, email: str, password: str) -> Dict[str, Any]:
+        """
+        完整的登录流程：通过邮箱密码获取短期 Auth Token
+        
+        Args:
+            email: 邮箱
+            password: 密码
+        
+        Returns:
+            包含 email, password, auth_token, token_expires_at, name 的字典
+        
+        Raises:
+            Exception: 登录或获取失败
+        """
+        # 步骤1: Firebase 登录
+        firebase_token = await self.login_with_firebase(email, password)
+        
+        # 步骤2: 获取 One-Time Auth Token（短期Token）
+        auth_token = await self.get_windsurf_auth_token(firebase_token)
+        
+        # 步骤3: 获取用户信息
+        try:
+            user_info = await self.get_current_user(auth_token)
+            user = user_info.get('user', {})
+            name = user.get('name') or user.get('username') or email.split('@')[0]
+        except:
+            name = email.split('@')[0]
+        
+        # Auth Token 有效期约1小时（保守估计50分钟）
+        token_expires_at = datetime.utcnow() + timedelta(minutes=50)
+        
+        print(f"✅ 成功获取短期Auth Token，有效期至: {token_expires_at}")
+        
+        return {
+            'email': email,
+            'password': password,
+            'auth_token': auth_token,
+            'token_expires_at': token_expires_at,
+            'name': name,
+            'api_key': auth_token  # 兼容旧版，api_key字段也返回auth_token
+        }
+    
+    async def login_and_get_api_key(self, email: str, password: str, use_short_term_key: bool = True) -> Dict[str, Any]:
         """
         完整的登录流程：通过邮箱密码获取 API Key
         
         Args:
             email: 邮箱
             password: 密码
+            use_short_term_key: 获取方式选择（默认True）
+                               True: 使用 RegisterUser 获取 API Key（更快，推荐）
+                               False: 使用 CreateTeamApiSecret 获取 API Key（备用）
+                               注意：两种方式返回的都是 sk-ws-... 格式的长期 API Key
         
         Returns:
             包含 email, password, api_key, name 的字典
@@ -329,35 +378,28 @@ class WindsurfLoginService:
         Raises:
             Exception: 登录或获取失败
         """
-        try:
-            # 步骤1: Firebase 登录
-            firebase_token = await self.login_with_firebase(email, password)
-            
-            # 步骤2: 注册用户并获取 API Key
+        # 步骤1: Firebase 登录
+        firebase_token = await self.login_with_firebase(email, password)
+        
+        if use_short_term_key:
+            # 使用 RegisterUser 获取 API Key（推荐，更快）
             user_data = await self.register_user(firebase_token)
-            
             return {
                 'email': email,
                 'password': password,
                 'api_key': user_data['api_key'],
                 'name': user_data['name']
             }
-        
-        except Exception as e:
-            # 如果 RegisterUser 失败，尝试备用方法
-            try:
-                firebase_token = await self.login_with_firebase(email, password)
-                auth_token = await self.get_windsurf_auth_token(firebase_token)
-                api_key = await self.create_api_key(auth_token)
-                
-                return {
-                    'email': email,
-                    'password': password,
-                    'api_key': api_key,
-                    'name': email.split('@')[0]  # 使用邮箱前缀作为名称
-                }
-            except:
-                raise e  # 抛出原始错误
+        else:
+            # 使用 CreateTeamApiSecret 获取 API Key（备用）
+            auth_token = await self.get_windsurf_auth_token(firebase_token)
+            api_key = await self.create_api_key(auth_token)
+            return {
+                'email': email,
+                'password': password,
+                'api_key': api_key,
+                'name': email.split('@')[0]
+            }
 
     async def get_current_user(self, auth_token: str) -> Dict[str, Any]:
         """
@@ -455,7 +497,8 @@ async def windsurf_login(
     email: str, 
     password: str, 
     firebase_api_key: Optional[str] = None,
-    db: Optional[Session] = None
+    db: Optional[Session] = None,
+    use_short_term_key: bool = True
 ) -> Dict[str, Any]:
     """
     便捷函数：通过邮箱密码登录并获取 API Key
@@ -465,6 +508,9 @@ async def windsurf_login(
         password: 密码
         firebase_api_key: Firebase API Key（可选）
         db: 数据库会话（可选，用于读取配置）
+        use_short_term_key: 是否使用短期密钥（默认True）
+                           True: 使用 RegisterUser 获取短期密钥
+                           False: 使用 CreateTeamApiSecret 获取长期 sk-ws-... 密钥
     
     Returns:
         包含 email, password, api_key, name 的字典
@@ -474,7 +520,7 @@ async def windsurf_login(
     """
     service = WindsurfLoginService(firebase_api_key, db)
     try:
-        return await service.login_and_get_api_key(email, password)
+        return await service.login_and_get_api_key(email, password, use_short_term_key)
     finally:
         await service.close()
 

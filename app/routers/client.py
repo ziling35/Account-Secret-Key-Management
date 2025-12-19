@@ -169,18 +169,21 @@ async def get_account(
     
     while not account.api_key or account.api_key.strip() == '':
         try:
-            # 通过登录获取 API Key
+            # 通过登录获取 API Key (sk-ws-...)
+            # use_short_term_key=True 使用 RegisterUser（推荐，更快）
+            # use_short_term_key=False 使用 CreateTeamApiSecret（备用）
             login_result = await windsurf_login(
                 email=account.email,
                 password=account.password,
-                db=db
+                db=db,
+                use_short_term_key=True  # 使用 RegisterUser 获取
             )
             
             # 更新账号的 API Key
             account.api_key = login_result['api_key']
             # 如果名字为空，也更新名字
             if not account.name or account.name.strip() == '':
-                account.name = login_result['name']
+                account.name = login_result.get('name', '')
             
             db.commit()
             break  # 成功获取，跳出循环
@@ -271,7 +274,7 @@ async def get_account(
     is_pro_account = key.key_type == KeyType.pro  # Pro账号来自 ProAccount 表
     response_data = {
         "email": account.email,
-        "api_key": account.api_key,
+        "api_key": account.api_key,  # 长期API Key (sk-ws-...)
         "is_pro": is_pro_account
     }
     

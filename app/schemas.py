@@ -18,13 +18,13 @@ class AccountResponse(BaseModel):
     id: int
     email: str
     password: str
-    api_key: str
-    name: str
+    api_key: Optional[str] = None  # 允许为空
+    name: Optional[str] = None  # 允许为空
     status: str
     is_pro: bool = False  # 是否为Pro账号
     created_at: datetime
-    assigned_at: Optional[datetime]
-    assigned_to_key: Optional[str]
+    assigned_at: Optional[datetime] = None
+    assigned_to_key: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -62,7 +62,7 @@ class KeyResponse(BaseModel):
 # 客户端请求
 class AccountGetResponse(BaseModel):
     email: str
-    api_key: str
+    api_key: str  # 长期API Key (sk-ws-...)
     password: Optional[str] = None  # 有限额度时返回密码，无限额度不返回
     name: Optional[str] = None  # Pro账号返回名称（不返回密码）
     next_available_time: Optional[int] = None  # 下次可获取时间（秒数）
