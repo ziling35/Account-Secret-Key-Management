@@ -301,3 +301,34 @@ class PluginInfoListItem(BaseModel):
     
     class Config:
         from_attributes = True
+
+# 设备绑定相关
+class DeviceBindingItem(BaseModel):
+    """设备绑定项"""
+    id: int
+    device_id: str
+    device_name: Optional[str] = None
+    first_bound_at: datetime
+    last_active_at: datetime
+    request_count: int
+    is_active: bool
+    
+    class Config:
+        from_attributes = True
+
+class DeviceBindingListResponse(BaseModel):
+    """设备绑定列表响应"""
+    success: bool
+    message: str
+    devices: list[DeviceBindingItem] = []
+    total: int = 0
+    max_devices: int = 1  # 最大允许绑定数
+
+class DeviceBindRequest(BaseModel):
+    """设备绑定请求"""
+    device_id: str
+    device_name: Optional[str] = None
+
+class DeviceUnbindRequest(BaseModel):
+    """设备解绑请求"""
+    device_id: str

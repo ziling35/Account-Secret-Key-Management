@@ -7,7 +7,7 @@ from typing import List
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo
+from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo, DeviceBinding
 from app.schemas import (
     AccountResponse, KeyCreate, KeyResponse, StatsResponse,
     AnnouncementCreate, AnnouncementUpdate, AnnouncementListItem,
@@ -332,6 +332,15 @@ async def list_keys(
         limit = key.account_limit or 0
         key_dict['account_limit'] = limit
         key_dict['remaining_accounts'] = (max(limit - (key.request_count or 0), 0) if limit > 0 else -1)
+        
+        # 添加设备绑定信息
+        device_bindings = db.query(DeviceBinding).filter(
+            DeviceBinding.key_code == key.key_code,
+            DeviceBinding.is_active == True
+        ).all()
+        key_dict['device_count'] = len(device_bindings)
+        key_dict['max_devices'] = key.max_devices if hasattr(key, 'max_devices') else 3
+        
         result.append(key_dict)
     
     return {
@@ -1771,3 +1780,124 @@ async def toggle_plugin(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"切换插件状态失败: {str(e)}")
+
+# ==================== 设备绑定管理 ====================
+
+@router.get("/api/keys/{key_code}/devices")
+async def get_key_devices(
+    key_code: str,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取指定卡密的设备绑定列表"""
+    try:
+        # 验证卡密是否存在
+        key = db.query(Key).filter(Key.key_code == key_code).first()
+        if not key:
+            raise HTTPException(status_code=404, detail="卡密不存在")
+        
+        # 查询设备绑定
+        devices = db.query(DeviceBinding).filter(
+            DeviceBinding.key_code == key_code,
+            DeviceBinding.is_active == True
+        ).order_by(DeviceBinding.last_active_at.desc()).all()
+        
+        # 格式化返回数据
+        device_list = []
+        for device in devices:
+            device_list.append({
+                "id": device.id,
+                "device_id": device.device_id,
+                "device_name": device.device_name or "未命名设备",
+                "first_bound_at": device.first_bound_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "last_active_at": device.last_active_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "request_count": device.request_count,
+                "is_active": device.is_active
+            })
+        
+        return {
+            "success": True,
+            "key_code": key_code,
+            "max_devices": key.max_devices if hasattr(key, 'max_devices') else 3,
+            "device_count": len(device_list),
+            "devices": device_list
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取设备列表失败: {str(e)}")
+
+@router.post("/api/keys/{key_code}/devices/unbind")
+async def unbind_device(
+    key_code: str,
+    device_id: str = Form(...),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """管理员强制解绑设备"""
+    try:
+        # 验证卡密是否存在
+        key = db.query(Key).filter(Key.key_code == key_code).first()
+        if not key:
+            raise HTTPException(status_code=404, detail="卡密不存在")
+        
+        # 查找设备绑定
+        binding = db.query(DeviceBinding).filter(
+            DeviceBinding.key_code == key_code,
+            DeviceBinding.device_id == device_id,
+            DeviceBinding.is_active == True
+        ).first()
+        
+        if not binding:
+            raise HTTPException(status_code=404, detail="设备绑定不存在或已解绑")
+        
+        # 标记为不活跃（软删除）
+        binding.is_active = False
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "设备解绑成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"解绑设备失败: {str(e)}")
+
+@router.put("/api/keys/{key_code}/max-devices")
+async def update_max_devices(
+    key_code: str,
+    max_devices: int = Form(...),
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新卡密的最大设备绑定数"""
+    try:
+        # 验证参数
+        if max_devices < 1 or max_devices > 10:
+            raise HTTPException(status_code=400, detail="设备数量必须在 1-10 之间")
+        
+        # 查找卡密
+        key = db.query(Key).filter(Key.key_code == key_code).first()
+        if not key:
+            raise HTTPException(status_code=404, detail="卡密不存在")
+        
+        # 更新 max_devices
+        if hasattr(key, 'max_devices'):
+            key.max_devices = max_devices
+        else:
+            raise HTTPException(status_code=500, detail="数据库缺少 max_devices 字段，请先运行迁移脚本")
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"最大设备数已更新为 {max_devices}",
+            "max_devices": max_devices
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")

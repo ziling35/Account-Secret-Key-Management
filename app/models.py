@@ -66,6 +66,21 @@ class Key(Base):
     # 无限额度专用：每日请求限制
     daily_request_count = Column(Integer, default=0, nullable=False)
     last_reset_date = Column(Date, nullable=True)  # 最后重置日期
+    # 设备绑定限制
+    max_devices = Column(Integer, default=1, nullable=False)  # 最大设备绑定数，默认1台
+
+class DeviceBinding(Base):
+    """设备绑定记录表"""
+    __tablename__ = "device_bindings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key_code = Column(String, nullable=False, index=True)  # 密钥
+    device_id = Column(String, nullable=False, index=True)  # 设备唯一标识（机器码）
+    device_name = Column(String, nullable=True)  # 设备名称（可选）
+    first_bound_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 首次绑定时间
+    last_active_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 最后活跃时间
+    request_count = Column(Integer, default=0, nullable=False)  # 该设备的请求次数
+    is_active = Column(Boolean, default=True, nullable=False)  # 是否激活（用于解绑）
 
 class Config(Base):
     __tablename__ = "config"

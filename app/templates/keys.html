@@ -60,6 +60,9 @@
                                     <div style="padding: 8px 12px;">
                                         <el-checkbox label="notes">备注</el-checkbox>
                                     </div>
+                                    <div style="padding: 8px 12px;">
+                                        <el-checkbox label="device_binding">设备绑定</el-checkbox>
+                                    </div>
                                 </el-checkbox-group>
                             </el-dropdown-menu>
                         </template>
@@ -269,6 +272,24 @@
                 </template>
             </el-table-column>
 
+            <el-table-column v-if="visibleColumns.includes('device_binding')" label="设备绑定" width="140" align="center">
+                <template #default="scope">
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <el-tag :type="getDeviceBindingType(scope.row)" size="small">
+                            {{ scope.row.device_count || 0 }}/{{ scope.row.max_devices || 3 }}
+                        </el-tag>
+                        <el-button 
+                            link 
+                            type="primary" 
+                            size="small"
+                            @click="handleViewDevices(scope.row)"
+                            title="查看设备列表">
+                            详情
+                        </el-button>
+                    </div>
+                </template>
+            </el-table-column>
+
             <el-table-column label="操作" width="100" align="center" fixed="right">
                 <template #default="scope">
                     <el-button 
@@ -347,6 +368,72 @@
             <el-button @click="previewDialogVisible = false">关闭</el-button>
         </template>
     </el-dialog>
+
+    <!-- 设备绑定详情对话框 -->
+    <el-dialog v-model="deviceDialogVisible" title="设备绑定详情" width="800px">
+        <div v-loading="deviceLoading">
+            <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>卡密：</strong>{{ currentKeyCode }}
+                        <el-divider direction="vertical"></el-divider>
+                        <strong>已绑定：</strong>{{ deviceList.length }}/{{ maxDevices }} 台设备
+                    </div>
+                    <el-button size="small" @click="handleEditMaxDevices">修改最大设备数</el-button>
+                </div>
+            </el-alert>
+
+            <el-table :data="deviceList" stripe border style="width: 100%;">
+                <el-table-column prop="device_name" label="设备名称" min-width="150" align="center">
+                    <template #default="scope">
+                        <i class="bi bi-laptop" style="margin-right: 4px;"></i>
+                        {{ scope.row.device_name }}
+                    </template>
+                </el-table-column>
+                <el-table-column prop="device_id" label="设备ID" min-width="200" align="center">
+                    <template #default="scope">
+                        <code style="font-size: 0.85rem;">{{ truncate(scope.row.device_id, 30) }}</code>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="first_bound_at" label="首次绑定" width="160" align="center"></el-table-column>
+                <el-table-column prop="last_active_at" label="最后活跃" width="160" align="center"></el-table-column>
+                <el-table-column prop="request_count" label="请求次数" width="100" align="center"></el-table-column>
+                <el-table-column label="操作" width="100" align="center">
+                    <template #default="scope">
+                        <el-button 
+                            link 
+                            type="danger" 
+                            size="small"
+                            @click="handleUnbindDevice(scope.row)">
+                            解绑
+                        </el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+
+            <el-empty v-if="deviceList.length === 0" description="暂无设备绑定"></el-empty>
+        </div>
+        <template #footer>
+            <el-button @click="deviceDialogVisible = false">关闭</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 修改最大设备数对话框 -->
+    <el-dialog v-model="editMaxDevicesDialogVisible" title="修改最大设备数" width="400px">
+        <el-form label-width="120px">
+            <el-form-item label="当前卡密">
+                <code>{{ currentKeyCode }}</code>
+            </el-form-item>
+            <el-form-item label="最大设备数">
+                <el-input-number v-model="newMaxDevices" :min="1" :max="10" style="width: 100%;"></el-input-number>
+                <div style="color: #909399; font-size: 12px; margin-top: 4px;">允许绑定的最大设备数量（1-10台）</div>
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="editMaxDevicesDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="handleUpdateMaxDevices" :loading="updatingMaxDevices">确定</el-button>
+        </template>
+    </el-dialog>
 </div>
 {% endraw %}
 {% endblock %}
@@ -384,8 +471,18 @@ createApp({
         const visibleColumns = ref([
             'key_code', 'status', 'key_type', 'duration_days', 'created_at', 'activated_at',
             'remaining_time', 'account_limit', 'remaining_accounts', 
-            'request_count', 'last_request_ip', 'notes'
+            'request_count', 'last_request_ip', 'notes', 'device_binding'
         ]);
+
+        // 设备绑定相关
+        const deviceDialogVisible = ref(false);
+        const deviceLoading = ref(false);
+        const deviceList = ref([]);
+        const currentKeyCode = ref('');
+        const maxDevices = ref(3);
+        const editMaxDevicesDialogVisible = ref(false);
+        const newMaxDevices = ref(3);
+        const updatingMaxDevices = ref(false);
 
         // 创建对话框
         const createDialogVisible = ref(false);
@@ -646,6 +743,105 @@ createApp({
             }
         };
 
+        // 设备绑定管理方法
+        const getDeviceBindingType = (row) => {
+            const count = row.device_count || 0;
+            const max = row.max_devices || 3;
+            if (count === 0) return 'info';
+            if (count >= max) return 'danger';
+            if (count >= max * 0.8) return 'warning';
+            return 'success';
+        };
+
+        const handleViewDevices = async (row) => {
+            currentKeyCode.value = row.key_code;
+            maxDevices.value = row.max_devices || 3;
+            deviceDialogVisible.value = true;
+            deviceLoading.value = true;
+            
+            try {
+                const response = await axios.get(`/admin/api/keys/${row.key_code}/devices`);
+                if (response.data.success) {
+                    deviceList.value = response.data.devices;
+                    maxDevices.value = response.data.max_devices;
+                } else {
+                    ElMessage.error('获取设备列表失败');
+                }
+            } catch (error) {
+                ElMessage.error('获取设备列表失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                deviceLoading.value = false;
+            }
+        };
+
+        const handleUnbindDevice = async (device) => {
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    `确定要解绑设备 "${device.device_name}" 吗？`,
+                    '解绑确认',
+                    {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }
+                );
+
+                const formData = new FormData();
+                formData.append('device_id', device.device_id);
+
+                const response = await axios.post(
+                    `/admin/api/keys/${currentKeyCode.value}/devices/unbind`,
+                    formData
+                );
+                
+                if (response.data.success) {
+                    ElMessage.success('设备解绑成功');
+                    // 重新加载设备列表
+                    await handleViewDevices({ key_code: currentKeyCode.value });
+                    // 重新加载卡密列表
+                    loadKeys();
+                } else {
+                    ElMessage.error('解绑失败');
+                }
+            } catch (error) {
+                if (error !== 'cancel') {
+                    ElMessage.error('解绑失败: ' + (error.response?.data?.detail || error.message));
+                }
+            }
+        };
+
+        const handleEditMaxDevices = () => {
+            newMaxDevices.value = maxDevices.value;
+            editMaxDevicesDialogVisible.value = true;
+        };
+
+        const handleUpdateMaxDevices = async () => {
+            updatingMaxDevices.value = true;
+            try {
+                const formData = new FormData();
+                formData.append('max_devices', newMaxDevices.value);
+
+                const response = await axios.put(
+                    `/admin/api/keys/${currentKeyCode.value}/max-devices`,
+                    formData
+                );
+                
+                if (response.data.success) {
+                    ElMessage.success(response.data.message);
+                    maxDevices.value = newMaxDevices.value;
+                    editMaxDevicesDialogVisible.value = false;
+                    // 重新加载卡密列表
+                    loadKeys();
+                } else {
+                    ElMessage.error('更新失败');
+                }
+            } catch (error) {
+                ElMessage.error('更新失败: ' + (error.response?.data?.detail || error.message));
+            } finally {
+                updatingMaxDevices.value = false;
+            }
+        };
+
         const handleDelete = async (row) => {
             try {
                 await ElementPlus.ElMessageBox.confirm(
@@ -684,10 +880,13 @@ createApp({
             searchForm, dateRange, visibleColumns,
             createDialogVisible, creating, createForm,
             previewDialogVisible, keyPreview, createdCount,
+            deviceDialogVisible, deviceLoading, deviceList, currentKeyCode, maxDevices,
+            editMaxDevicesDialogVisible, newMaxDevices, updatingMaxDevices,
             keyCountText, sortChips, sortChipsDisplay, extraSortCount,
             loadKeys, handleSearch, handleRefresh, handleClear, handleCreate, handleKeyTypeChange, handleCreateSubmit,
             handleColumnSort, getSortIcon, removeSort, copyKey, copyKeys, downloadKeysTxt,
-            truncate, formatDateTime, getRemainingTimeColor, saveColumnPreference, handleDelete
+            truncate, formatDateTime, getRemainingTimeColor, saveColumnPreference, handleDelete,
+            getDeviceBindingType, handleViewDevices, handleUnbindDevice, handleEditMaxDevices, handleUpdateMaxDevices
         };
     }
 }).use(ElementPlus).mount('#keyApp');

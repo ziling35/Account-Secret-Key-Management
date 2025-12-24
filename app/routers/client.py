@@ -5,8 +5,8 @@ import math
 import os
 
 from app.database import get_db
-from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo, AccountAssignmentHistory
-from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse, AccountHistoryResponse, AccountHistoryItem, VersionNotesResponse, VersionNoteItem, PluginInfoResponse, PluginVersionCheckResponse, PluginListResponse, PluginListItem
+from app.models import Account, ProAccount, Key, AccountStatus, KeyStatus, KeyType, Config, Announcement, VersionNote, PluginInfo, AccountAssignmentHistory, DeviceBinding
+from app.schemas import AccountGetResponse, KeyStatusResponse, VersionResponse, AnnouncementResponse, LoginRequest, LoginResponse, AccountHistoryResponse, AccountHistoryItem, VersionNotesResponse, VersionNoteItem, PluginInfoResponse, PluginVersionCheckResponse, PluginListResponse, PluginListItem, DeviceBindingListResponse, DeviceBindingItem, DeviceBindRequest, DeviceUnbindRequest
 from app.auth import get_api_key
 from app.utils import calculate_remaining_time
 from app.windsurf_login import windsurf_login
@@ -20,11 +20,13 @@ ACCOUNT_EXPIRY_DAYS = int(os.getenv("ACCOUNT_EXPIRY_DAYS", "6"))
 async def get_account(
     request: Request,
     api_key: str = Depends(get_api_key),
+    device_id: str = None,  # 设备ID（可选，从请求头或body获取）
     db: Session = Depends(get_db)
 ):
     """
     客户端获取未使用账号
     - 需要在请求头中提供 X-API-Key
+    - 支持设备绑定限制
     - 无限额度：5分钟限制 + 每日20次限制
     - 有限额度：按数量限制，无时间限制
     """
@@ -36,6 +38,50 @@ async def get_account(
     # 检查是否被禁用
     if key.is_disabled:
         raise HTTPException(status_code=403, detail="密钥已被管理员禁用")
+    
+    # === 设备绑定验证 ===
+    # 尝试从请求头获取设备ID
+    if not device_id:
+        device_id = request.headers.get("X-Device-ID")
+    
+    if device_id:
+        # 查询该密钥的所有活跃设备绑定
+        active_bindings = db.query(DeviceBinding).filter(
+            DeviceBinding.key_code == api_key,
+            DeviceBinding.is_active == True
+        ).all()
+        
+        # 检查当前设备是否已绑定
+        current_device_binding = next(
+            (b for b in active_bindings if b.device_id == device_id),
+            None
+        )
+        
+        if current_device_binding:
+            # 设备已绑定，更新最后活跃时间和请求次数
+            current_device_binding.last_active_at = datetime.utcnow()
+            current_device_binding.request_count += 1
+            db.commit()
+        else:
+            # 设备未绑定，检查是否超过最大绑定数
+            if len(active_bindings) >= key.max_devices:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"设备绑定数已达上限（{key.max_devices}台），请先解绑其他设备"
+                )
+            
+            # 创建新的设备绑定
+            new_binding = DeviceBinding(
+                key_code=api_key,
+                device_id=device_id,
+                device_name=request.headers.get("X-Device-Name"),
+                first_bound_at=datetime.utcnow(),
+                last_active_at=datetime.utcnow(),
+                request_count=1,
+                is_active=True
+            )
+            db.add(new_binding)
+            db.commit()
     
     # 检查密钥状态（使用 UTC 时间）
     now = datetime.utcnow()
@@ -290,6 +336,7 @@ async def get_account(
 
 @router.get("/key/status", response_model=KeyStatusResponse)
 async def get_key_status(
+    request: Request,
     api_key: str = Depends(get_api_key),
     db: Session = Depends(get_db)
 ):
@@ -297,11 +344,57 @@ async def get_key_status(
     查询密钥状态和剩余时间
     - 需要在请求头中提供 X-API-Key
     - 首次查询时自动激活密钥
+    - 支持设备绑定限制
     """
     # 验证密钥
     key = db.query(Key).filter(Key.key_code == api_key).first()
     if not key:
         raise HTTPException(status_code=401, detail="无效的API密钥")
+    
+    # 检查是否被禁用
+    if key.is_disabled:
+        raise HTTPException(status_code=403, detail="密钥已被管理员禁用")
+    
+    # === 设备绑定验证 ===
+    device_id = request.headers.get("X-Device-ID")
+    
+    if device_id:
+        # 查询该密钥的所有活跃设备绑定
+        active_bindings = db.query(DeviceBinding).filter(
+            DeviceBinding.key_code == api_key,
+            DeviceBinding.is_active == True
+        ).all()
+        
+        # 检查当前设备是否已绑定
+        current_device_binding = next(
+            (b for b in active_bindings if b.device_id == device_id),
+            None
+        )
+        
+        if current_device_binding:
+            # 设备已绑定，更新最后活跃时间
+            current_device_binding.last_active_at = datetime.utcnow()
+            db.commit()
+        else:
+            # 设备未绑定，检查是否超过最大绑定数
+            if len(active_bindings) >= key.max_devices:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"设备绑定数已达上限（{key.max_devices}台），请先解绑其他设备"
+                )
+            
+            # 创建新的设备绑定
+            new_binding = DeviceBinding(
+                key_code=api_key,
+                device_id=device_id,
+                device_name=request.headers.get("X-Device-Name"),
+                first_bound_at=datetime.utcnow(),
+                last_active_at=datetime.utcnow(),
+                request_count=1,
+                is_active=True
+            )
+            db.add(new_binding)
+            db.commit()
     
     now = datetime.utcnow()
     
@@ -737,3 +830,82 @@ async def check_plugin_update(
         changelog=plugin.changelog if has_update else None,
         file_size=plugin.file_size if has_update else None
     )
+
+
+@router.get("/device/list", response_model=DeviceBindingListResponse)
+async def get_device_bindings(
+    api_key: str = Depends(get_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    获取该密钥的所有设备绑定
+    - 需要在请求头中提供 X-API-Key
+    - 返回所有已绑定的设备列表
+    """
+    # 验证密钥
+    key = db.query(Key).filter(Key.key_code == api_key).first()
+    if not key:
+        raise HTTPException(status_code=401, detail="无效的API密钥")
+    
+    # 查询所有活跃的设备绑定
+    bindings = db.query(DeviceBinding).filter(
+        DeviceBinding.key_code == api_key,
+        DeviceBinding.is_active == True
+    ).order_by(DeviceBinding.last_active_at.desc()).all()
+    
+    device_items = [
+        DeviceBindingItem(
+            id=b.id,
+            device_id=b.device_id,
+            device_name=b.device_name,
+            first_bound_at=b.first_bound_at,
+            last_active_at=b.last_active_at,
+            request_count=b.request_count,
+            is_active=b.is_active
+        )
+        for b in bindings
+    ]
+    
+    return DeviceBindingListResponse(
+        success=True,
+        message=f"获取成功，共 {len(device_items)} 台设备",
+        devices=device_items,
+        total=len(device_items),
+        max_devices=key.max_devices
+    )
+
+
+@router.post("/device/unbind")
+async def unbind_device(
+    unbind_data: DeviceUnbindRequest,
+    api_key: str = Depends(get_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    解绑指定设备
+    - 需要在请求头中提供 X-API-Key
+    - 将设备标记为非活跃状态
+    """
+    # 验证密钥
+    key = db.query(Key).filter(Key.key_code == api_key).first()
+    if not key:
+        raise HTTPException(status_code=401, detail="无效的API密钥")
+    
+    # 查找设备绑定
+    binding = db.query(DeviceBinding).filter(
+        DeviceBinding.key_code == api_key,
+        DeviceBinding.device_id == unbind_data.device_id,
+        DeviceBinding.is_active == True
+    ).first()
+    
+    if not binding:
+        raise HTTPException(status_code=404, detail="未找到该设备绑定")
+    
+    # 标记为非活跃
+    binding.is_active = False
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "设备解绑成功"
+    }
