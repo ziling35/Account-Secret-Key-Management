@@ -264,6 +264,52 @@ class WindsurfLoginService:
         
         except httpx.HTTPError as e:
             raise Exception(f'获取 Auth Token 失败: {str(e)}')
+
+    async def get_ott_token(self, email: str, password: str) -> Dict[str, Any]:
+        """
+        获取 OTT (One-Time Token) 用于无感换号
+        
+        通过 Firebase 登录后，使用 GetOneTimeAuthToken API 获取 OTT
+        OTT 可以用于 windsurf:// URI Handler 实现无感换号
+        
+        Args:
+            email: 邮箱
+            password: 密码
+        
+        Returns:
+            包含 ott_token, email, name 的字典
+        
+        Raises:
+            Exception: 获取失败
+        """
+        # 步骤1: Firebase 登录
+        firebase_token = await self.login_with_firebase(email, password)
+        print(f"✅ Firebase 登录成功，token 前缀: {firebase_token[:30]}...")
+        
+        # 步骤2: 获取 One-Time Auth Token
+        # 注意：这个 token 可能是 ott$ 格式，也可能是其他格式
+        auth_token = await self.get_windsurf_auth_token(firebase_token)
+        print(f"✅ 获取 Auth Token 成功，token 前缀: {auth_token[:30]}...")
+        
+        # 检查 token 格式
+        token_type = "unknown"
+        if auth_token.startswith('ott$'):
+            token_type = "OTT"
+        elif auth_token.startswith('sk-ws-'):
+            token_type = "API_KEY"
+        print(f"📋 Token 类型: {token_type}")
+        
+        # 注意：OTT 是一次性的，不要用它调用任何 API（如 get_current_user）
+        # 否则 OTT 会被消耗，导致无感换号失败
+        # 直接使用邮箱前缀作为用户名
+        name = email.split('@')[0]
+        
+        return {
+            'ott_token': auth_token,
+            'token_type': token_type,
+            'email': email,
+            'name': name
+        }
     
     async def create_api_key(self, auth_token: str, name: str = None) -> str:
         """
@@ -491,6 +537,156 @@ class WindsurfLoginService:
         }
         
         return result
+
+    async def migrate_ott_to_api_key(self, ott_token: str) -> str:
+        """
+        将 OTT (One-Time Token) 转换为真正的 API Key
+        
+        关键发现：用 OTT 调用 register.windsurf.com 的 RegisterUser API 可以获取真正的 API Key！
+        
+        Args:
+            ott_token: OTT token (格式: ott$xxx)
+        
+        Returns:
+            api_key: 真正的 API Key (格式: sk-ws-xxx)
+        
+        Raises:
+            Exception: 转换失败
+        """
+        print(f"🔄 RegisterUser (OTT -> API Key)...")
+        try:
+            response = await self.client.post(
+                'https://register.windsurf.com/exa.seat_management_pb.SeatManagementService/RegisterUser',
+                json={'firebase_id_token': ott_token},
+                headers={
+                    'Content-Type': 'application/json',
+                    'User-Agent': self.USER_AGENT,
+                }
+            )
+            
+            if response.status_code != 200:
+                error_body = response.text[:500] if response.text else ""
+                print(f"⚠️ RegisterUser 失败: HTTP {response.status_code}, 响应: {error_body}")
+                raise Exception(f'RegisterUser 失败: HTTP {response.status_code}')
+            
+            data = response.json()
+            api_key = data.get('api_key') or data.get('apiKey')
+            name = data.get('name', '')
+            api_server_url = data.get('api_server_url', '')
+            
+            if not api_key:
+                print(f"⚠️ RegisterUser 响应: {data}")
+                raise Exception('RegisterUser 响应中未找到 api_key')
+            
+            # 验证是否是 sk-ws- 格式
+            if api_key.startswith('sk-ws-'):
+                print(f"✅ 获取 API Key 成功: {api_key[:30]}...")
+                print(f"   用户名: {name}")
+                print(f"   API Server: {api_server_url}")
+                return api_key
+            else:
+                print(f"⚠️ api_key 不是 sk-ws- 格式: {api_key[:30]}...")
+                return api_key
+            
+        except Exception as e:
+            if 'RegisterUser' in str(e):
+                raise
+            raise Exception(f'RegisterUser 请求失败: {str(e)}')
+
+
+def parse_callback_url(callback_url: str) -> dict:
+    """
+    解析 callback_url 提取 access_token 等参数
+    
+    格式: windsurf://codeium.windsurf#access_token=ott$xxx&state=xxx&token_type=Bearer
+    
+    Args:
+        callback_url: Windsurf 登录回调 URL
+    
+    Returns:
+        包含 access_token, state, token_type 的字典
+    """
+    if '#' not in callback_url:
+        return {}
+    
+    hash_part = callback_url.split('#')[1]
+    params = {}
+    for param in hash_part.split('&'):
+        if '=' in param:
+            key, value = param.split('=', 1)
+            params[key] = value
+    
+    return params
+
+
+async def convert_ott_to_api_key(
+    ott_token: str
+) -> str:
+    """
+    便捷函数：将 OTT token 转换为 API Key
+    
+    Args:
+        ott_token: OTT token (格式: ott$xxx)
+    
+    Returns:
+        api_key: 真正的 API Key (格式: sk-ws-xxx)
+    
+    Raises:
+        Exception: 转换失败
+    """
+    service = WindsurfLoginService()
+    try:
+        return await service.migrate_ott_to_api_key(ott_token)
+    finally:
+        await service.close()
+
+
+async def get_api_key_from_callback_url(
+    callback_url: str
+) -> Dict[str, Any]:
+    """
+    便捷函数：从 callback_url 中提取并转换 OTT 为 API Key
+    
+    Args:
+        callback_url: Windsurf 登录回调 URL
+                     格式: windsurf://codeium.windsurf#access_token=ott$xxx&state=xxx&token_type=Bearer
+    
+    Returns:
+        包含 api_key, ott_token, state 等信息的字典
+    
+    Raises:
+        Exception: 解析或转换失败
+    """
+    # 1. 解析 callback_url
+    params = parse_callback_url(callback_url)
+    ott_token = params.get('access_token')
+    
+    if not ott_token:
+        raise Exception('callback_url 中未找到 access_token')
+    
+    # 2. 判断 token 类型
+    if ott_token.startswith('sk-ws-'):
+        # 已经是最终的 API Key，直接返回
+        return {
+            'api_key': ott_token,
+            'is_ott': False,
+            'state': params.get('state'),
+            'token_type': params.get('token_type', 'Bearer'),
+        }
+    
+    if not ott_token.startswith('ott$'):
+        raise Exception(f'未知的 token 格式: {ott_token[:20]}...')
+    
+    # 3. OTT 转换为 API Key
+    api_key = await convert_ott_to_api_key(ott_token)
+    
+    return {
+        'api_key': api_key,
+        'ott_token': ott_token,
+        'is_ott': True,
+        'state': params.get('state'),
+        'token_type': params.get('token_type', 'Bearer'),
+    }
 
 
 async def windsurf_login(

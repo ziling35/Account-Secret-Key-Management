@@ -86,6 +86,7 @@
                     <el-option label="有限额度" value="limited"></el-option>
                     <el-option label="无限额度" value="unlimited"></el-option>
                     <el-option label="Pro类型" value="pro"></el-option>
+                    <el-option label="Team类型" value="team"></el-option>
                 </el-select>
             </el-form-item>
             <el-form-item label="激活日期">
@@ -154,6 +155,7 @@
                 <template #default="scope">
                     <el-tag v-if="scope.row.key_type === 'unlimited'" type="warning" size="small">无限额度</el-tag>
                     <el-tag v-else-if="scope.row.key_type === 'pro'" type="success" size="small">Pro类型</el-tag>
+                    <el-tag v-else-if="scope.row.key_type === 'team'" type="danger" size="small">Team类型</el-tag>
                     <el-tag v-else type="primary" size="small">有限额度</el-tag>
                 </template>
             </el-table-column>
@@ -168,7 +170,7 @@
                     </div>
                 </template>
                 <template #default="scope">
-                    {{ scope.row.duration_days }} 天
+                    {{ scope.row.duration_days }}天<span v-if="scope.row.duration_hours"> {{ scope.row.duration_hours }}小时</span>
                 </template>
             </el-table-column>
 
@@ -323,22 +325,40 @@
                     <el-radio label="limited">有限额度</el-radio>
                     <el-radio label="unlimited">无限额度</el-radio>
                     <el-radio label="pro">Pro类型</el-radio>
+                    <el-radio label="team">Team类型</el-radio>
                 </el-radio-group>
                 <div style="color: #909399; font-size: 12px; margin-top: 4px;">
                     <div v-if="createForm.key_type === 'limited'">✓ 账号总数有限，不限制获取频率</div>
                     <div v-else-if="createForm.key_type === 'pro'">✓ 只能获取Pro账号，可重复获取，需配置账号配额</div>
+                    <div v-else-if="createForm.key_type === 'team'">✓ 一键切号类型，通过第三方API获取登录URL，需配置第三方卡密</div>
                     <div v-else>✓ 账号数量无限，每5分钟只能获取一次</div>
                 </div>
             </el-form-item>
             <el-form-item label="数量">
                 <el-input-number v-model="createForm.count" :min="1" :max="100" style="width: 100%;"></el-input-number>
             </el-form-item>
-            <el-form-item label="有效期（天）">
-                <el-input-number v-model="createForm.duration_days" :min="1" style="width: 100%;"></el-input-number>
+            <el-form-item label="有效期">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <el-input-number v-model="createForm.duration_days" :min="0" style="width: 120px;"></el-input-number>
+                    <span>天</span>
+                    <el-input-number v-model="createForm.duration_hours" :min="0" :max="23" style="width: 120px;"></el-input-number>
+                    <span>小时</span>
+                </div>
+                <div style="color: #909399; font-size: 12px; margin-top: 4px;">天数和小时数至少填一个，支持小时卡（如: 0天 2小时）</div>
             </el-form-item>
-            <el-form-item label="账号配额" v-if="createForm.key_type === 'limited' || createForm.key_type === 'pro'">
+            <el-form-item label="账号配额" v-if="createForm.key_type === 'limited' || createForm.key_type === 'pro' || createForm.key_type === 'team'">
                 <el-input-number v-model="createForm.account_limit" :min="-1" style="width: 100%;"></el-input-number>
                 <div style="color: #909399; font-size: 12px; margin-top: 4px;">-1=不限制, 0=仅授权不含账号, >0=固定配额</div>
+            </el-form-item>
+            <el-form-item label="第三方卡密" v-if="createForm.key_type === 'team'">
+                <el-input v-model="createForm.team_card_key" placeholder="请输入第三方卡密（如：84PZ-7GEE-XCY6-5SH9）"></el-input>
+                <div style="color: #909399; font-size: 12px; margin-top: 4px;">Team类型必填，用于调用第三方API获取登录URL</div>
+            </el-form-item>
+            <el-form-item label="关联团队" v-if="createForm.key_type === 'pro'">
+                <el-select v-model="createForm.team_id" placeholder="可选，用于积分检测和自动切换" clearable style="width: 100%;">
+                    <el-option v-for="t in teamList" :key="t.id" :label="t.name" :value="t.id"></el-option>
+                </el-select>
+                <div style="color: #909399; font-size: 12px; margin-top: 4px;">关联团队后，一键换号时自动检测积分并切换成员</div>
             </el-form-item>
             <el-form-item label="备注">
                 <el-input v-model="createForm.notes" placeholder="可选"></el-input>
@@ -491,9 +511,15 @@ createApp({
             key_type: 'limited',
             count: 10,
             duration_days: 30,
+            duration_hours: 0,
             account_limit: 5,
-            notes: ''
+            notes: '',
+            team_card_key: '',
+            team_id: null
         });
+        
+        // 团队列表（用于Pro类型关联）
+        const teamList = ref([]);
 
         // 预览对话框
         const previewDialogVisible = ref(false);
@@ -585,7 +611,14 @@ createApp({
             loadKeys();
         };
 
-        const handleCreate = () => {
+        const handleCreate = async () => {
+            // 加载团队列表
+            try {
+                const response = await axios.get('/admin/api/teams');
+                teamList.value = response.data.teams || [];
+            } catch (e) {
+                teamList.value = [];
+            }
             createDialogVisible.value = true;
         };
 
@@ -614,8 +647,11 @@ createApp({
                     key_type: 'limited',
                     count: 10,
                     duration_days: 30,
+                    duration_hours: 0,
                     account_limit: 5,
-                    notes: ''
+                    notes: '',
+                    team_card_key: '',
+                    team_id: null
                 };
 
                 loadKeys();
@@ -878,7 +914,7 @@ createApp({
             Plus, Refresh, CopyDocument, Download,
             loading, keys, currentPage, pageSize, total, currentSort,
             searchForm, dateRange, visibleColumns,
-            createDialogVisible, creating, createForm,
+            createDialogVisible, creating, createForm, teamList,
             previewDialogVisible, keyPreview, createdCount,
             deviceDialogVisible, deviceLoading, deviceList, currentKeyCode, maxDevices,
             editMaxDevicesDialogVisible, newMaxDevices, updatingMaxDevices,

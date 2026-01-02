@@ -101,9 +101,12 @@ async def get_stats(username: str = Depends(verify_admin), db: Session = Depends
 async def create_keys(
     count: int,
     key_type: str,
-    duration_days: int,
+    duration_days: int = 0,
+    duration_hours: int = 0,
     notes: str = "",
     account_limit: int = 0,
+    team_card_key: str = "",
+    team_id: int = None,
     username: str = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
@@ -111,11 +114,12 @@ async def create_keys(
     if count <= 0 or count > 100:
         raise HTTPException(status_code=400, detail="数量必须在1-100之间")
     
-    if key_type not in ["unlimited", "limited", "pro"]:
-        raise HTTPException(status_code=400, detail="密钥类型必须为 unlimited、limited 或 pro")
+    if key_type not in ["unlimited", "limited", "pro", "team"]:
+        raise HTTPException(status_code=400, detail="密钥类型必须为 unlimited、limited、pro 或 team")
     
-    if duration_days <= 0:
-        raise HTTPException(status_code=400, detail="有效期必须大于0天")
+    # 验证有效期：天数和小时数至少有一个大于0
+    if duration_days <= 0 and duration_hours <= 0:
+        raise HTTPException(status_code=400, detail="有效期必须大于0（天数或小时数至少填一个）")
     
     if account_limit < -1:
         raise HTTPException(status_code=400, detail="账号配额无效（-1=不限制, 0=仅授权不含账号, >0=固定配额）")
@@ -123,6 +127,11 @@ async def create_keys(
     # 验证无限额度类型
     if key_type == "unlimited" and account_limit > 0:
         raise HTTPException(status_code=400, detail="无限额度类型的账号配额必须为0")
+    
+    # 验证Team类型：必须提供第三方卡密（允许批量创建，共用同一个第三方卡密）
+    if key_type == "team":
+        if not team_card_key or not team_card_key.strip():
+            raise HTTPException(status_code=400, detail="Team类型必须提供第三方卡密")
     
     # 验证有限额度类型：允许 account_limit = 0，表示不能获取账号但密钥可用于插件授权
     
@@ -137,8 +146,11 @@ async def create_keys(
             key_code=key_code,
             key_type=KeyType[key_type],
             duration_days=duration_days,
+            duration_hours=duration_hours,
             notes=notes,
-            account_limit=account_limit
+            account_limit=account_limit,
+            team_card_key=team_card_key.strip() if key_type == "team" else None,
+            team_id=team_id if key_type == "pro" else None
         )
         db.add(key)
         keys.append(key_code)
@@ -185,7 +197,9 @@ async def export_keys(
         lines.append(f"密钥 {idx}:")
         lines.append(f"  代码: {key.key_code}")
         lines.append(f"  状态: {key.status.value}")
-        lines.append(f"  有效期: {key.duration_days}天")
+        duration_hours = getattr(key, 'duration_hours', 0) or 0
+        duration_str = f"{key.duration_days}天" + (f" {duration_hours}小时" if duration_hours else "")
+        lines.append(f"  有效期: {duration_str}")
         lines.append(f"  创建时间: {key.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
         if key.activated_at:
             lines.append(f"  激活时间: {key.activated_at.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1037,6 +1051,65 @@ async def test_firebase_key(
             "valid": False,
             "message": f"测试失败: {str(e)}"
         }
+
+# ==================== Pro账号固定配置 ====================
+
+@router.get("/api/settings/fixed-pro")
+async def get_fixed_pro_settings(
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取固定Pro账号配置"""
+    fixed_pro_email = db.query(Config).filter(Config.key == "fixed_pro_email").first()
+    fixed_pro_password = db.query(Config).filter(Config.key == "fixed_pro_password").first()
+    fixed_pro_name = db.query(Config).filter(Config.key == "fixed_pro_name").first()
+    fixed_pro_api_key = db.query(Config).filter(Config.key == "fixed_pro_api_key").first()
+    
+    return {
+        "fixed_pro_email": fixed_pro_email.value if fixed_pro_email else "",
+        "fixed_pro_password": fixed_pro_password.value if fixed_pro_password else "",
+        "fixed_pro_name": fixed_pro_name.value if fixed_pro_name else "ProUser",
+        "fixed_pro_api_key": fixed_pro_api_key.value if fixed_pro_api_key else "",
+        "has_password": bool(fixed_pro_password and fixed_pro_password.value)
+    }
+
+@router.post("/api/settings/fixed-pro")
+async def update_fixed_pro_settings(
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新固定Pro账号配置"""
+    form_data = await request.form()
+    fixed_pro_email = form_data.get("fixed_pro_email", "").strip()
+    fixed_pro_password = form_data.get("fixed_pro_password", "").strip()
+    fixed_pro_name = form_data.get("fixed_pro_name", "").strip()
+    fixed_pro_api_key = form_data.get("fixed_pro_api_key", "").strip()
+    
+    # 更新或创建配置
+    configs_to_update = [
+        ("fixed_pro_email", fixed_pro_email),
+        ("fixed_pro_name", fixed_pro_name),
+        ("fixed_pro_api_key", fixed_pro_api_key)
+    ]
+    
+    # 密码只在非空时更新（避免误清空）
+    if fixed_pro_password:
+        configs_to_update.append(("fixed_pro_password", fixed_pro_password))
+    
+    for key, value in configs_to_update:
+        config = db.query(Config).filter(Config.key == key).first()
+        if config:
+            config.value = value
+        else:
+            db.add(Config(key=key, value=value))
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Pro账号配置已更新"
+    }
 
 # ==================== 工具函数 ====================
 
@@ -1901,3 +1974,349 @@ async def update_max_devices(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")
+
+
+# ==================== 团队管理 ====================
+
+from app.models import TeamConfig, TeamMember, MemberSwitchHistory
+
+@router.get("/teams", response_class=HTMLResponse)
+async def teams_page(request: Request, username: str = Depends(verify_admin)):
+    """团队管理页面"""
+    return templates.TemplateResponse("teams.html", {"request": request})
+
+
+@router.get("/api/teams")
+async def get_teams(
+    search: str = None,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取团队列表"""
+    query = db.query(TeamConfig)
+    
+    if search:
+        query = query.filter(
+            (TeamConfig.name.ilike(f"%{search}%")) |
+            (TeamConfig.admin_email.ilike(f"%{search}%"))
+        )
+    
+    teams = query.order_by(TeamConfig.created_at.desc()).all()
+    
+    # 统计每个团队的成员数
+    result = []
+    for team in teams:
+        member_count = db.query(TeamMember).filter(TeamMember.team_id == team.id).count()
+        team_dict = {
+            "id": team.id,
+            "name": team.name,
+            "admin_email": team.admin_email,
+            "is_active": team.is_active,
+            "credits_threshold": team.credits_threshold,
+            "check_interval_minutes": team.check_interval_minutes,
+            "current_member_id": team.current_member_id,
+            "switch_count": team.switch_count,
+            "created_at": team.created_at.isoformat() if team.created_at else None,
+            "member_count": member_count
+        }
+        result.append(team_dict)
+    
+    return {"success": True, "teams": result}
+
+
+@router.post("/api/teams")
+async def create_team(
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """创建团队（多个Pro卡密可关联到同一个团队，通过卡密的team_id字段）"""
+    data = await request.json()
+    
+    # 检查是否已存在同名团队
+    existing = db.query(TeamConfig).filter(
+        TeamConfig.name == data.get("name")
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="已存在同名团队")
+    
+    team = TeamConfig(
+        name=data.get("name"),
+        admin_email=data.get("admin_email"),
+        admin_password=data.get("admin_password"),
+        credits_threshold=data.get("credits_threshold", 20),
+        check_interval_minutes=data.get("check_interval_minutes", 5)
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    
+    return {"success": True, "message": "创建成功", "id": team.id}
+
+
+@router.put("/api/teams/{team_id}")
+async def update_team(
+    team_id: int,
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新团队"""
+    team = db.query(TeamConfig).filter(TeamConfig.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="团队不存在")
+    
+    data = await request.json()
+    
+    if data.get("name"):
+        team.name = data["name"]
+    if data.get("admin_email"):
+        team.admin_email = data["admin_email"]
+    if data.get("admin_password"):
+        team.admin_password = data["admin_password"]
+    if data.get("credits_threshold") is not None:
+        team.credits_threshold = data["credits_threshold"]
+    if data.get("check_interval_minutes") is not None:
+        team.check_interval_minutes = data["check_interval_minutes"]
+    if data.get("is_active") is not None:
+        team.is_active = data["is_active"]
+    
+    db.commit()
+    return {"success": True, "message": "更新成功"}
+
+
+@router.delete("/api/teams/{team_id}")
+async def delete_team(
+    team_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除团队及其所有成员"""
+    team = db.query(TeamConfig).filter(TeamConfig.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="团队不存在")
+    
+    # 删除成员
+    db.query(TeamMember).filter(TeamMember.team_id == team_id).delete()
+    # 删除切换历史
+    db.query(MemberSwitchHistory).filter(MemberSwitchHistory.team_id == team_id).delete()
+    # 删除团队
+    db.delete(team)
+    db.commit()
+    
+    return {"success": True, "message": "删除成功"}
+
+
+@router.get("/api/teams/{team_id}/members")
+async def get_team_members(
+    team_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取团队成员列表"""
+    members = db.query(TeamMember).filter(
+        TeamMember.team_id == team_id
+    ).order_by(TeamMember.sort_order).all()
+    
+    result = []
+    for m in members:
+        result.append({
+            "id": m.id,
+            "team_id": m.team_id,
+            "email": m.email,
+            "name": m.name,
+            "is_enabled": m.is_enabled,
+            "is_current": m.is_current,
+            "is_exhausted": m.is_exhausted,
+            "last_credits": m.last_credits,
+            "sort_order": m.sort_order,
+            "created_at": m.created_at.isoformat() if m.created_at else None
+        })
+    
+    return {"success": True, "members": result}
+
+
+@router.post("/api/teams/{team_id}/members")
+async def add_team_member(
+    team_id: int,
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """添加团队成员"""
+    team = db.query(TeamConfig).filter(TeamConfig.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="团队不存在")
+    
+    data = await request.json()
+    
+    # 检查邮箱是否已存在
+    existing = db.query(TeamMember).filter(
+        TeamMember.team_id == team_id,
+        TeamMember.email == data.get("email")
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该成员已存在")
+    
+    member = TeamMember(
+        team_id=team_id,
+        email=data.get("email"),
+        password=data.get("password"),
+        name=data.get("name"),
+        api_key=data.get("api_key"),
+        sort_order=data.get("sort_order", 0)
+    )
+    db.add(member)
+    db.commit()
+    
+    return {"success": True, "message": "添加成功", "id": member.id}
+
+
+@router.put("/api/teams/{team_id}/members/{member_id}")
+async def update_team_member(
+    team_id: int,
+    member_id: int,
+    request: Request,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """更新团队成员"""
+    member = db.query(TeamMember).filter(
+        TeamMember.id == member_id,
+        TeamMember.team_id == team_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    
+    data = await request.json()
+    
+    if data.get("email"):
+        member.email = data["email"]
+    if data.get("password"):
+        member.password = data["password"]
+    if data.get("name") is not None:
+        member.name = data["name"]
+    if data.get("api_key") is not None:
+        member.api_key = data["api_key"]
+    if data.get("sort_order") is not None:
+        member.sort_order = data["sort_order"]
+    
+    db.commit()
+    return {"success": True, "message": "更新成功"}
+
+
+@router.delete("/api/teams/{team_id}/members/{member_id}")
+async def delete_team_member(
+    team_id: int,
+    member_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """删除团队成员"""
+    member = db.query(TeamMember).filter(
+        TeamMember.id == member_id,
+        TeamMember.team_id == team_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    
+    db.delete(member)
+    db.commit()
+    
+    return {"success": True, "message": "删除成功"}
+
+
+@router.get("/api/teams/{team_id}/history")
+async def get_team_switch_history(
+    team_id: int,
+    limit: int = 50,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """获取切换历史"""
+    history = db.query(MemberSwitchHistory).filter(
+        MemberSwitchHistory.team_id == team_id
+    ).order_by(MemberSwitchHistory.switched_at.desc()).limit(limit).all()
+    
+    result = []
+    for h in history:
+        result.append({
+            "id": h.id,
+            "from_email": h.from_email,
+            "to_email": h.to_email,
+            "reason": h.reason,
+            "credits_before": h.credits_before,
+            "switched_at": h.switched_at.isoformat() if h.switched_at else None
+        })
+    
+    return {"success": True, "history": result}
+
+
+@router.post("/api/teams/{team_id}/set-current/{member_id}")
+async def set_current_member(
+    team_id: int,
+    member_id: int,
+    username: str = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """设置当前成员"""
+    team = db.query(TeamConfig).filter(TeamConfig.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="团队不存在")
+    
+    new_member = db.query(TeamMember).filter(
+        TeamMember.id == member_id,
+        TeamMember.team_id == team_id
+    ).first()
+    if not new_member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    
+    # 获取当前成员
+    current_member = db.query(TeamMember).filter(
+        TeamMember.team_id == team_id,
+        TeamMember.is_current == True
+    ).first()
+    
+    # 更新状态
+    if current_member and current_member.id != member_id:
+        current_member.is_current = False
+        current_member.is_enabled = False
+        current_member.disabled_at = datetime.utcnow()
+    
+    new_member.is_current = True
+    new_member.is_enabled = True
+    new_member.enabled_at = datetime.utcnow()
+    
+    team.current_member_id = member_id
+    team.last_switch_at = datetime.utcnow()
+    team.switch_count += 1
+    
+    # 记录切换历史
+    history = MemberSwitchHistory(
+        team_id=team_id,
+        from_member_id=current_member.id if current_member else None,
+        to_member_id=member_id,
+        from_email=current_member.email if current_member else None,
+        to_email=new_member.email,
+        reason="管理员手动切换",
+        credits_before=current_member.last_credits if current_member else None
+    )
+    db.add(history)
+    
+    # 更新固定Pro账号配置
+    from app.models import Config
+    email_config = db.query(Config).filter(Config.key == "fixed_pro_email").first()
+    if email_config:
+        email_config.value = new_member.email
+    else:
+        db.add(Config(key="fixed_pro_email", value=new_member.email))
+    
+    password_config = db.query(Config).filter(Config.key == "fixed_pro_password").first()
+    if password_config:
+        password_config.value = new_member.password
+    else:
+        db.add(Config(key="fixed_pro_password", value=new_member.password))
+    
+    db.commit()
+    
+    return {"success": True, "message": f"已切换到成员: {new_member.email}"}

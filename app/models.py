@@ -17,6 +17,7 @@ class KeyType(enum.Enum):
     unlimited = "unlimited"  # 无限额度（账号无限，5分钟限制）
     limited = "limited"      # 有限额度（账号有限，无频率限制）
     pro = "pro"              # Pro类型（只能获取pro账号，无插件限制）
+    team = "team"            # Team类型（一键切号，通过第三方API获取登录URL）
 
 class Account(Base):
     __tablename__ = "accounts"
@@ -52,7 +53,8 @@ class Key(Base):
     id = Column(Integer, primary_key=True, index=True)
     key_code = Column(String, unique=True, index=True, nullable=False)
     key_type = Column(SQLEnum(KeyType), default=KeyType.limited, nullable=False)  # 密钥类型
-    duration_days = Column(Integer, nullable=False)
+    duration_days = Column(Integer, nullable=False, default=0)
+    duration_hours = Column(Integer, nullable=False, default=0)  # 小时卡支持
     status = Column(SQLEnum(KeyStatus), default=KeyStatus.inactive, nullable=False)
     is_disabled = Column(Boolean, default=False, nullable=False)  # 是否被管理员禁用
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -68,6 +70,12 @@ class Key(Base):
     last_reset_date = Column(Date, nullable=True)  # 最后重置日期
     # 设备绑定限制
     max_devices = Column(Integer, default=1, nullable=False)  # 最大设备绑定数，默认1台
+    # Team卡密专用字段
+    team_card_key = Column(String, nullable=True)  # 第三方卡密（team类型必填）
+    # Pro切号专用字段（独立冷却时间戳）
+    last_pro_switch_at = Column(DateTime, nullable=True)  # 上次Pro切号时间
+    # 关联团队配置（用于积分检测和自动切换）
+    team_id = Column(Integer, nullable=True)  # 关联的团队ID
 
 class DeviceBinding(Base):
     """设备绑定记录表"""
@@ -81,6 +89,20 @@ class DeviceBinding(Base):
     last_active_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 最后活跃时间
     request_count = Column(Integer, default=0, nullable=False)  # 该设备的请求次数
     is_active = Column(Boolean, default=True, nullable=False)  # 是否激活（用于解绑）
+
+
+class TeamLoginCache(Base):
+    """Team卡密登录缓存表"""
+    __tablename__ = "team_login_cache"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key_code = Column(String, nullable=False, index=True, unique=True)  # 密钥（一个密钥一条缓存）
+    team_card_key = Column(String, nullable=False)  # 第三方卡密
+    callback_url = Column(String, nullable=False)  # 登录回调URL
+    email = Column(String, nullable=False)  # 账号邮箱
+    nickname = Column(String, nullable=True)  # 账号昵称
+    cached_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 缓存时间
+    expires_at = Column(DateTime, nullable=False)  # 过期时间（10分钟后）
 
 class Config(Base):
     __tablename__ = "config"
@@ -169,3 +191,65 @@ class PluginInfo(Base):
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ==================== 团队成员管理（固定Pro账号积分检测与自动切换） ====================
+
+class TeamConfig(Base):
+    """团队配置（多个Pro卡密可关联到同一个团队）"""
+    __tablename__ = "team_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)  # 团队名称
+    # 注意：key_code字段已移除，改为在Key表中通过team_id关联
+    admin_email = Column(String, nullable=False)  # 管理员邮箱
+    admin_password = Column(String, nullable=False)  # 管理员密码
+    admin_api_key = Column(String, nullable=True)  # 管理员API Key
+    admin_token = Column(String, nullable=True)  # 管理员Token（用于调用Windsurf API）
+    windsurf_team_id = Column(String, nullable=True)  # Windsurf团队ID
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    credits_threshold = Column(Integer, default=20, nullable=False)  # 积分阈值
+    check_interval_minutes = Column(Integer, default=5, nullable=False)  # 检测间隔（分钟）
+    current_member_id = Column(Integer, nullable=True)  # 当前使用的成员ID
+    last_check_at = Column(DateTime, nullable=True)  # 上次检测时间
+    last_switch_at = Column(DateTime, nullable=True)  # 上次切换时间
+    switch_count = Column(Integer, default=0, nullable=False)  # 切换次数
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class TeamMember(Base):
+    """团队成员（固定Pro账号的成员列表）"""
+    __tablename__ = "team_members"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(Integer, nullable=False, index=True)  # 关联的团队ID
+    email = Column(String, nullable=False, index=True)  # 成员邮箱
+    password = Column(String, nullable=False)  # 成员密码
+    api_key = Column(String, nullable=True)  # 成员API Key
+    name = Column(String, nullable=True)  # 成员名称
+    is_enabled = Column(Boolean, default=False, nullable=False)  # 是否启用Windsurf访问
+    is_current = Column(Boolean, default=False, nullable=False, index=True)  # 是否是当前使用的成员
+    is_exhausted = Column(Boolean, default=False, nullable=False)  # 积分已用尽，不再切换回来
+    last_credits = Column(Integer, default=0, nullable=False)  # 上次检测的积分
+    last_check_at = Column(DateTime, nullable=True)  # 上次检测时间
+    enabled_at = Column(DateTime, nullable=True)  # 启用时间
+    disabled_at = Column(DateTime, nullable=True)  # 禁用时间
+    sort_order = Column(Integer, default=0, nullable=False)  # 排序顺序
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MemberSwitchHistory(Base):
+    """成员切换历史记录"""
+    __tablename__ = "member_switch_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(Integer, nullable=False, index=True)  # 团队ID
+    from_member_id = Column(Integer, nullable=True)  # 原成员ID
+    to_member_id = Column(Integer, nullable=False)  # 新成员ID
+    from_email = Column(String, nullable=True)  # 原成员邮箱
+    to_email = Column(String, nullable=False)  # 新成员邮箱
+    reason = Column(String, nullable=False)  # 切换原因
+    credits_before = Column(Integer, nullable=True)  # 切换前积分
+    switched_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 切换时间

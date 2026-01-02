@@ -41,6 +41,7 @@ class KeyResponse(BaseModel):
     key_code: str
     key_type: str
     duration_days: int
+    duration_hours: int = 0  # 小时卡支持
     status: str
     is_disabled: bool = False
     created_at: datetime
@@ -332,3 +333,153 @@ class DeviceBindRequest(BaseModel):
 class DeviceUnbindRequest(BaseModel):
     """设备解绑请求"""
     device_id: str
+
+
+# Team卡密相关
+class TeamSwitchResponse(BaseModel):
+    """Team卡密一键切号响应"""
+    success: bool
+    message: str
+    callback_url: Optional[str] = None  # Windsurf登录URL
+    api_key: Optional[str] = None  # 转换后的API Key (sk-ws-...)
+    email: Optional[str] = None  # 账号邮箱
+    nickname: Optional[str] = None  # 账号昵称
+    cached: bool = False  # 是否来自缓存
+    expires_in: Optional[int] = None  # 缓存剩余秒数
+
+
+# Pro卡密一键切号相关
+class ProSwitchResponse(BaseModel):
+    """Pro卡密一键切号响应"""
+    success: bool
+    message: str
+    callback_url: Optional[str] = None  # Windsurf登录URL (windsurf://codeium.windsurf#access_token=...)
+    api_key: Optional[str] = None  # Token (OTT 或 API Key)
+    token_type: Optional[str] = None  # Token类型: OTT, API_KEY, unknown
+    email: Optional[str] = None  # 账号邮箱
+    name: Optional[str] = None  # 账号名称
+
+
+# ==================== 团队成员管理（固定Pro账号积分检测与自动切换） ====================
+
+class TeamConfigCreate(BaseModel):
+    """创建团队配置"""
+    name: str
+    admin_email: str
+    admin_password: str
+    credits_threshold: int = 20
+    check_interval_minutes: int = 5
+
+class TeamConfigUpdate(BaseModel):
+    """更新团队配置"""
+    name: Optional[str] = None
+    admin_email: Optional[str] = None
+    admin_password: Optional[str] = None
+    credits_threshold: Optional[int] = None
+    check_interval_minutes: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class TeamConfigResponse(BaseModel):
+    """团队配置响应"""
+    id: int
+    name: str
+    key_code: str
+    admin_email: str
+    is_active: bool
+    credits_threshold: int
+    check_interval_minutes: int
+    current_member_id: Optional[int] = None
+    last_check_at: Optional[datetime] = None
+    last_switch_at: Optional[datetime] = None
+    switch_count: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class TeamMemberCreate(BaseModel):
+    """添加团队成员"""
+    email: str
+    password: str
+    name: Optional[str] = None
+    sort_order: int = 0
+
+class TeamMemberUpdate(BaseModel):
+    """更新团队成员"""
+    email: Optional[str] = None
+    password: Optional[str] = None
+    name: Optional[str] = None
+    sort_order: Optional[int] = None
+
+class TeamMemberResponse(BaseModel):
+    """团队成员响应"""
+    id: int
+    team_id: int
+    email: str
+    name: Optional[str] = None
+    is_enabled: bool
+    is_current: bool
+    last_credits: int
+    last_check_at: Optional[datetime] = None
+    enabled_at: Optional[datetime] = None
+    disabled_at: Optional[datetime] = None
+    sort_order: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class MemberSwitchHistoryResponse(BaseModel):
+    """成员切换历史响应"""
+    id: int
+    team_id: int
+    from_member_id: Optional[int] = None
+    to_member_id: int
+    from_email: Optional[str] = None
+    to_email: str
+    reason: str
+    credits_before: Optional[int] = None
+    switched_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class TeamListResponse(BaseModel):
+    """团队列表响应"""
+    success: bool
+    teams: list[TeamConfigResponse] = []
+    total: int = 0
+
+class TeamMemberListResponse(BaseModel):
+    """团队成员列表响应"""
+    success: bool
+    members: list[TeamMemberResponse] = []
+    total: int = 0
+
+class TeamSwitchHistoryListResponse(BaseModel):
+    """切换历史列表响应"""
+    success: bool
+    history: list[MemberSwitchHistoryResponse] = []
+    total: int = 0
+
+class TeamAutoSwitchResponse(BaseModel):
+    """自动切换响应"""
+    success: bool
+    message: str
+    switched: bool = False  # 是否执行了切换
+    from_member: Optional[str] = None  # 原成员邮箱
+    to_member: Optional[str] = None  # 新成员邮箱
+    new_email: Optional[str] = None  # 新成员邮箱
+    new_password: Optional[str] = None  # 新成员密码
+    reason: Optional[str] = None  # 切换原因
+    current_credits: Optional[int] = None  # 当前积分
+
+class TeamCreditsCheckResponse(BaseModel):
+    """积分检测响应"""
+    success: bool
+    message: str
+    email: Optional[str] = None
+    credits: Optional[int] = None  # 当前积分（prompts_used）
+    credits_remaining: Optional[int] = None  # 剩余积分
+    need_switch: bool = False  # 是否需要切换
+

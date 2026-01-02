@@ -59,6 +59,15 @@ def init_db():
                         conn.execute(text("ALTER TABLE keys ADD COLUMN IF NOT EXISTS key_type VARCHAR NOT NULL DEFAULT 'limited'"))
                 print("✅ 已添加 key_type 列")
             
+            # 迁移 duration_hours 列（小时卡支持）
+            if 'duration_hours' not in columns:
+                with engine.begin() as conn:
+                    if engine.dialect.name == 'sqlite':
+                        conn.execute(text("ALTER TABLE keys ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 0"))
+                    else:
+                        conn.execute(text("ALTER TABLE keys ADD COLUMN IF NOT EXISTS duration_hours INTEGER NOT NULL DEFAULT 0"))
+                print("✅ 已添加 duration_hours 列（小时卡支持）")
+            
             # 初始化版本配置
             from app.models import Config
             db = SessionLocal()

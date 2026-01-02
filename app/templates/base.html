@@ -53,6 +53,12 @@
                 </a>
             </li>
             <li>
+                <a href="/admin/teams" class="{% if '/teams' in request.url.path %}active{% endif %}">
+                    <i class="bi bi-people-fill"></i>
+                    <span>团队管理</span>
+                </a>
+            </li>
+            <li>
                 <a href="/admin/settings" class="{% if '/settings' in request.url.path %}active{% endif %}">
                     <i class="bi bi-gear"></i>
                     <span>系统设置</span>

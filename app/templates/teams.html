@@ -1,0 +1,568 @@
+{% extends "base.html" %}
+
+{% block title %}团队管理 - Windsurf账号池{% endblock %}
+
+{% block content %}
+<div id="app">
+    <div class="page-header">
+        <h1><i class="bi bi-people-fill"></i> 团队管理</h1>
+        <p class="text-muted">管理固定Pro账号的团队与成员，实现积分检测与自动切换</p>
+    </div>
+
+    <!-- 统计卡片 -->
+    <el-row :gutter="20" style="margin-bottom: 20px;">
+        <el-col :span="6">
+            <el-card shadow="hover">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <i class="bi bi-people-fill"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">[[ stats.total_teams ]]</div>
+                        <div class="stat-label">团队总数</div>
+                    </div>
+                </div>
+            </el-card>
+        </el-col>
+        <el-col :span="6">
+            <el-card shadow="hover">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                        <i class="bi bi-person-check"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">[[ stats.total_members ]]</div>
+                        <div class="stat-label">成员总数</div>
+                    </div>
+                </div>
+            </el-card>
+        </el-col>
+        <el-col :span="6">
+            <el-card shadow="hover">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                        <i class="bi bi-arrow-repeat"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">[[ stats.total_switches ]]</div>
+                        <div class="stat-label">切换次数</div>
+                    </div>
+                </div>
+            </el-card>
+        </el-col>
+        <el-col :span="6">
+            <el-card shadow="hover">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                        <i class="bi bi-check-circle"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">[[ stats.active_teams ]]</div>
+                        <div class="stat-label">活跃团队</div>
+                    </div>
+                </div>
+            </el-card>
+        </el-col>
+    </el-row>
+
+    <!-- 操作栏 -->
+    <el-card shadow="never" style="margin-bottom: 20px;">
+        <el-row :gutter="20" align="middle">
+            <el-col :span="12">
+                <el-input
+                    v-model="searchKeyword"
+                    placeholder="搜索团队名称或密钥..."
+                    prefix-icon="Search"
+                    clearable
+                    @clear="loadTeams"
+                    @keyup.enter="loadTeams"
+                    style="width: 300px;"
+                />
+                <el-button type="primary" @click="loadTeams" style="margin-left: 10px;">
+                    <i class="bi bi-search"></i> 搜索
+                </el-button>
+            </el-col>
+            <el-col :span="12" style="text-align: right;">
+                <el-button type="primary" @click="showCreateDialog">
+                    <i class="bi bi-plus-lg"></i> 创建团队
+                </el-button>
+                <el-button @click="loadTeams">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </el-button>
+            </el-col>
+        </el-row>
+    </el-card>
+
+    <!-- 团队列表 -->
+    <el-card shadow="never">
+        <el-table :data="teams" stripe v-loading="loading" style="width: 100%">
+            <el-table-column prop="id" label="ID" width="80" />
+            <el-table-column prop="name" label="团队名称" width="150" />
+            <el-table-column prop="admin_email" label="管理员邮箱" width="200" />
+            <el-table-column label="积分阈值" width="100">
+                <template #default="{ row }">
+                    <el-tag type="warning">[[ row.credits_threshold ]]</el-tag>
+                </template>
+            </el-table-column>
+            <el-table-column label="成员数" width="80">
+                <template #default="{ row }">
+                    <el-tag>[[ row.member_count || 0 ]]</el-tag>
+                </template>
+            </el-table-column>
+            <el-table-column label="切换次数" width="100">
+                <template #default="{ row }">
+                    <span>[[ row.switch_count ]]</span>
+                </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+                <template #default="{ row }">
+                    <el-tag :type="row.is_active ? 'success' : 'danger'">
+                        [[ row.is_active ? '启用' : '禁用' ]]
+                    </el-tag>
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" width="280" fixed="right">
+                <template #default="{ row }">
+                    <el-button size="small" type="primary" @click="showMembersDialog(row)">
+                        <i class="bi bi-people"></i> 成员
+                    </el-button>
+                    <el-button size="small" @click="showEditDialog(row)">
+                        <i class="bi bi-pencil"></i> 编辑
+                    </el-button>
+                    <el-button size="small" type="danger" @click="deleteTeam(row)">
+                        <i class="bi bi-trash"></i> 删除
+                    </el-button>
+                </template>
+            </el-table-column>
+        </el-table>
+    </el-card>
+
+    <!-- 创建/编辑团队对话框 -->
+    <el-dialog v-model="teamDialogVisible" :title="isEdit ? '编辑团队' : '创建团队'" width="500px">
+        <el-form :model="teamForm" label-width="100px">
+            <el-form-item label="团队名称" required>
+                <el-input v-model="teamForm.name" placeholder="输入团队名称" />
+            </el-form-item>
+            <el-form-item label="管理员邮箱" required>
+                <el-input v-model="teamForm.admin_email" placeholder="输入Windsurf管理员邮箱" />
+            </el-form-item>
+            <el-form-item label="管理员密码" required>
+                <el-input v-model="teamForm.admin_password" type="password" placeholder="输入管理员密码" show-password />
+            </el-form-item>
+            <el-form-item label="积分阈值">
+                <el-input-number v-model="teamForm.credits_threshold" :min="1" :max="1000" />
+                <span style="margin-left: 10px; color: #909399;">低于此值触发切换</span>
+            </el-form-item>
+            <el-form-item label="检测间隔">
+                <el-input-number v-model="teamForm.check_interval_minutes" :min="1" :max="60" />
+                <span style="margin-left: 10px; color: #909399;">分钟</span>
+            </el-form-item>
+            <el-form-item label="状态" v-if="isEdit">
+                <el-switch v-model="teamForm.is_active" active-text="启用" inactive-text="禁用" />
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="teamDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="saveTeam" :loading="saving">保存</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 成员管理对话框 -->
+    <el-dialog v-model="membersDialogVisible" :title="'团队成员 - ' + currentTeam.name" width="900px">
+        <div style="margin-bottom: 15px;">
+            <el-button type="primary" size="small" @click="showAddMemberDialog">
+                <i class="bi bi-plus-lg"></i> 添加成员
+            </el-button>
+            <el-button size="small" @click="loadMembers(currentTeam.id)">
+                <i class="bi bi-arrow-clockwise"></i> 刷新
+            </el-button>
+        </div>
+        
+        <el-table :data="members" stripe v-loading="membersLoading" style="width: 100%">
+            <el-table-column prop="id" label="ID" width="60" />
+            <el-table-column prop="email" label="邮箱" width="200" />
+            <el-table-column prop="name" label="名称" width="100" />
+            <el-table-column label="积分" width="80">
+                <template #default="{ row }">
+                    <el-tag :type="row.last_credits < currentTeam.credits_threshold ? 'danger' : 'success'">
+                        [[ row.last_credits ]]
+                    </el-tag>
+                </template>
+            </el-table-column>
+            <el-table-column label="状态" width="180">
+                <template #default="{ row }">
+                    <el-tag v-if="row.is_current" type="success">当前使用</el-tag>
+                    <el-tag v-else-if="row.is_enabled" type="warning">已启用</el-tag>
+                    <el-tag v-else type="info">未启用</el-tag>
+                    <el-tag v-if="row.is_exhausted" type="danger" style="margin-left: 5px;">积分耗尽</el-tag>
+                </template>
+            </el-table-column>
+            <el-table-column prop="sort_order" label="排序" width="80" />
+            <el-table-column label="操作" width="200">
+                <template #default="{ row }">
+                    <el-button size="small" @click="showEditMemberDialog(row)">
+                        <i class="bi bi-pencil"></i>
+                    </el-button>
+                    <el-button size="small" type="primary" @click="setCurrentMember(row)" :disabled="row.is_current">
+                        设为当前
+                    </el-button>
+                    <el-button size="small" type="danger" @click="deleteMember(row)">
+                        <i class="bi bi-trash"></i>
+                    </el-button>
+                </template>
+            </el-table-column>
+        </el-table>
+        
+        <!-- 切换历史 -->
+        <el-divider>切换历史</el-divider>
+        <el-table :data="switchHistory" stripe style="width: 100%; max-height: 200px;">
+            <el-table-column prop="switched_at" label="时间" width="180">
+                <template #default="{ row }">
+                    [[ formatDate(row.switched_at) ]]
+                </template>
+            </el-table-column>
+            <el-table-column prop="from_email" label="原成员" width="180" />
+            <el-table-column prop="to_email" label="新成员" width="180" />
+            <el-table-column prop="reason" label="原因" />
+            <el-table-column prop="credits_before" label="切换前积分" width="100" />
+        </el-table>
+    </el-dialog>
+
+    <!-- 添加/编辑成员对话框 -->
+    <el-dialog v-model="memberDialogVisible" :title="isEditMember ? '编辑成员' : '添加成员'" width="400px">
+        <el-form :model="memberForm" label-width="80px">
+            <el-form-item label="邮箱" required>
+                <el-input v-model="memberForm.email" placeholder="输入成员邮箱" />
+            </el-form-item>
+            <el-form-item label="密码" required>
+                <el-input v-model="memberForm.password" type="password" placeholder="输入成员密码" show-password />
+            </el-form-item>
+            <el-form-item label="名称">
+                <el-input v-model="memberForm.name" placeholder="可选" />
+            </el-form-item>
+            <el-form-item label="API Key">
+                <el-input v-model="memberForm.api_key" placeholder="成员的Windsurf API Key（用于启用/禁用）" />
+            </el-form-item>
+            <el-form-item label="排序">
+                <el-input-number v-model="memberForm.sort_order" :min="0" />
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="memberDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="saveMember" :loading="savingMember">保存</el-button>
+        </template>
+    </el-dialog>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const { createApp, ref, reactive, onMounted, computed } = Vue;
+
+const app = createApp({
+    delimiters: ['[[', ']]'],
+    setup() {
+        // 数据
+        const loading = ref(false);
+        const saving = ref(false);
+        const teams = ref([]);
+        const searchKeyword = ref('');
+        const stats = reactive({
+            total_teams: 0,
+            total_members: 0,
+            total_switches: 0,
+            active_teams: 0
+        });
+        
+        // 团队对话框
+        const teamDialogVisible = ref(false);
+        const isEdit = ref(false);
+        const teamForm = reactive({
+            id: null,
+            name: '',
+            admin_email: '',
+            admin_password: '',
+            credits_threshold: 20,
+            check_interval_minutes: 5,
+            is_active: true
+        });
+        
+        // 成员管理
+        const membersDialogVisible = ref(false);
+        const membersLoading = ref(false);
+        const members = ref([]);
+        const switchHistory = ref([]);
+        const currentTeam = reactive({ id: null, name: '', credits_threshold: 20 });
+        
+        // 成员对话框
+        const memberDialogVisible = ref(false);
+        const isEditMember = ref(false);
+        const savingMember = ref(false);
+        const memberForm = reactive({
+            id: null,
+            email: '',
+            password: '',
+            name: '',
+            api_key: '',
+            sort_order: 0
+        });
+        
+        // 加载团队列表
+        const loadTeams = async () => {
+            loading.value = true;
+            try {
+                const params = searchKeyword.value ? `?search=${searchKeyword.value}` : '';
+                const res = await axios.get(`/admin/api/teams${params}`);
+                teams.value = res.data.teams || [];
+                // 更新统计
+                stats.total_teams = teams.value.length;
+                stats.active_teams = teams.value.filter(t => t.is_active).length;
+                stats.total_members = teams.value.reduce((sum, t) => sum + (t.member_count || 0), 0);
+                stats.total_switches = teams.value.reduce((sum, t) => sum + t.switch_count, 0);
+            } catch (err) {
+                ElementPlus.ElMessage.error('加载失败: ' + (err.response?.data?.detail || err.message));
+            } finally {
+                loading.value = false;
+            }
+        };
+        
+        // 显示创建对话框
+        const showCreateDialog = () => {
+            isEdit.value = false;
+            Object.assign(teamForm, {
+                id: null, name: '', admin_email: '', admin_password: '',
+                credits_threshold: 20, check_interval_minutes: 5, is_active: true
+            });
+            teamDialogVisible.value = true;
+        };
+        
+        // 显示编辑对话框
+        const showEditDialog = (row) => {
+            isEdit.value = true;
+            Object.assign(teamForm, {
+                id: row.id,
+                name: row.name,
+                admin_email: row.admin_email,
+                admin_password: '',
+                credits_threshold: row.credits_threshold,
+                check_interval_minutes: row.check_interval_minutes,
+                is_active: row.is_active
+            });
+            teamDialogVisible.value = true;
+        };
+        
+        // 保存团队
+        const saveTeam = async () => {
+            if (!teamForm.name || !teamForm.admin_email) {
+                ElementPlus.ElMessage.warning('请填写必填项');
+                return;
+            }
+            saving.value = true;
+            try {
+                if (isEdit.value) {
+                    await axios.put(`/admin/api/teams/${teamForm.id}`, teamForm);
+                    ElementPlus.ElMessage.success('更新成功');
+                } else {
+                    await axios.post('/admin/api/teams', teamForm);
+                    ElementPlus.ElMessage.success('创建成功');
+                }
+                teamDialogVisible.value = false;
+                loadTeams();
+            } catch (err) {
+                ElementPlus.ElMessage.error('保存失败: ' + (err.response?.data?.detail || err.message));
+            } finally {
+                saving.value = false;
+            }
+        };
+        
+        // 删除团队
+        const deleteTeam = async (row) => {
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    `确定要删除团队 "${row.name}" 及其所有成员吗？`,
+                    '删除确认',
+                    { type: 'warning' }
+                );
+                await axios.delete(`/admin/api/teams/${row.id}`);
+                ElementPlus.ElMessage.success('删除成功');
+                loadTeams();
+            } catch (err) {
+                if (err !== 'cancel') {
+                    ElementPlus.ElMessage.error('删除失败: ' + (err.response?.data?.detail || err.message));
+                }
+            }
+        };
+        
+        // 显示成员管理对话框
+        const showMembersDialog = async (row) => {
+            Object.assign(currentTeam, row);
+            membersDialogVisible.value = true;
+            await loadMembers(row.id);
+            await loadSwitchHistory(row.id);
+        };
+        
+        // 加载成员列表
+        const loadMembers = async (teamId) => {
+            membersLoading.value = true;
+            try {
+                const res = await axios.get(`/admin/api/teams/${teamId}/members`);
+                members.value = res.data.members || [];
+            } catch (err) {
+                ElementPlus.ElMessage.error('加载成员失败');
+            } finally {
+                membersLoading.value = false;
+            }
+        };
+        
+        // 加载切换历史
+        const loadSwitchHistory = async (teamId) => {
+            try {
+                const res = await axios.get(`/admin/api/teams/${teamId}/history`);
+                switchHistory.value = res.data.history || [];
+            } catch (err) {
+                console.error('加载切换历史失败', err);
+            }
+        };
+        
+        // 显示添加成员对话框
+        const showAddMemberDialog = () => {
+            isEditMember.value = false;
+            Object.assign(memberForm, { id: null, email: '', password: '', name: '', api_key: '', sort_order: 0 });
+            memberDialogVisible.value = true;
+        };
+        
+        // 显示编辑成员对话框
+        const showEditMemberDialog = (row) => {
+            isEditMember.value = true;
+            Object.assign(memberForm, {
+                id: row.id,
+                email: row.email,
+                password: '',
+                name: row.name || '',
+                api_key: row.api_key || '',
+                sort_order: row.sort_order
+            });
+            memberDialogVisible.value = true;
+        };
+        
+        // 保存成员
+        const saveMember = async () => {
+            if (!memberForm.email) {
+                ElementPlus.ElMessage.warning('请填写邮箱');
+                return;
+            }
+            savingMember.value = true;
+            try {
+                if (isEditMember.value) {
+                    await axios.put(`/admin/api/teams/${currentTeam.id}/members/${memberForm.id}`, memberForm);
+                    ElementPlus.ElMessage.success('更新成功');
+                } else {
+                    if (!memberForm.password) {
+                        ElementPlus.ElMessage.warning('请填写密码');
+                        return;
+                    }
+                    await axios.post(`/admin/api/teams/${currentTeam.id}/members`, memberForm);
+                    ElementPlus.ElMessage.success('添加成功');
+                }
+                memberDialogVisible.value = false;
+                loadMembers(currentTeam.id);
+            } catch (err) {
+                ElementPlus.ElMessage.error('保存失败: ' + (err.response?.data?.detail || err.message));
+            } finally {
+                savingMember.value = false;
+            }
+        };
+        
+        // 删除成员
+        const deleteMember = async (row) => {
+            try {
+                await ElementPlus.ElMessageBox.confirm(`确定要删除成员 "${row.email}" 吗？`, '删除确认', { type: 'warning' });
+                await axios.delete(`/admin/api/teams/${currentTeam.id}/members/${row.id}`);
+                ElementPlus.ElMessage.success('删除成功');
+                loadMembers(currentTeam.id);
+            } catch (err) {
+                if (err !== 'cancel') {
+                    ElementPlus.ElMessage.error('删除失败');
+                }
+            }
+        };
+        
+        // 设为当前成员
+        const setCurrentMember = async (row) => {
+            try {
+                await axios.post(`/admin/api/teams/${currentTeam.id}/set-current/${row.id}`);
+                ElementPlus.ElMessage.success('设置成功');
+                loadMembers(currentTeam.id);
+                loadSwitchHistory(currentTeam.id);
+            } catch (err) {
+                ElementPlus.ElMessage.error('设置失败: ' + (err.response?.data?.detail || err.message));
+            }
+        };
+        
+        // 格式化日期
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return d.toLocaleString('zh-CN');
+        };
+        
+        onMounted(() => {
+            loadTeams();
+        });
+        
+        return {
+            loading, saving, teams, searchKeyword, stats,
+            teamDialogVisible, isEdit, teamForm,
+            membersDialogVisible, membersLoading, members, switchHistory, currentTeam,
+            memberDialogVisible, isEditMember, savingMember, memberForm,
+            loadTeams, showCreateDialog, showEditDialog, saveTeam, deleteTeam,
+            showMembersDialog, loadMembers,
+            showAddMemberDialog, showEditMemberDialog, saveMember, deleteMember,
+            setCurrentMember, formatDate
+        };
+    }
+});
+
+app.use(ElementPlus);
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+    app.component(key, component);
+}
+app.mount('#app');
+</script>
+
+<style>
+.stat-card {
+    display: flex;
+    align-items: center;
+    padding: 10px 0;
+}
+.stat-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: white;
+    margin-right: 15px;
+}
+.stat-info {
+    flex: 1;
+}
+.stat-value {
+    font-size: 28px;
+    font-weight: 600;
+    color: #303133;
+}
+.stat-label {
+    font-size: 14px;
+    color: #909399;
+}
+.key-code {
+    font-family: monospace;
+    font-size: 12px;
+    color: #606266;
+}
+</style>
+{% endblock %}
